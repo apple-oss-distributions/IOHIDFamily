@@ -24,6 +24,7 @@
 #define CFRUNLOOP_NEW_API 1
 
 #include <CoreFoundation/CFMachPort.h>
+#include <CoreFoundation/CFPriv.h>
 //#include <IOKit/hid/IOHIDLib.h>
 //#include <unistd.h>
 
@@ -31,6 +32,7 @@
 #include "IOHIDQueueClass.h"
 #include "IOHIDOutputTransactionClass.h"
 #include "IOHIDLibUserClient.h"
+#include "IOHIDPrivateKeys.h"
 
 __BEGIN_DECLS
 #include <mach/mach.h>
@@ -61,9 +63,9 @@ __END_DECLS
 
 #define allChecks() do {	    \
     connectCheck();		    \
+    seizeCheck();                   \
     openCheck();		    \
     terminatedCheck();              \
-    seizeCheck();                   \
 } while (0)
 
 #ifndef max
@@ -76,10 +78,6 @@ __END_DECLS
     ((a < b) ? a:b)
 #endif
 
-typedef struct MyPrivateData {
-    io_object_t			notification;
-    IOHIDDeviceClass *		self;
-} MyPrivateData;
 
 IOCFPlugInInterface ** IOHIDDeviceClass::alloc()
 {
@@ -107,10 +105,13 @@ IOHIDDeviceClass::IOHIDDeviceClass()
     fIsLUNZero			= false;
     fIsTerminated		= false;
     fIsSeized			= false;
+    fAsyncPortSetupDone = false;
 
     fRunLoop 			= NULL;
+    fCFSource			= NULL;
+	fNotifyCFSource		= NULL;
     fQueues			= NULL;
-    fDeviceProperties		= NULL;
+    fDeviceElements		= NULL;
     fReportHandlerQueue		= NULL; 
     fRemovalCallback		= NULL; 
     fRemovalTarget		= NULL;
@@ -123,6 +124,12 @@ IOHIDDeviceClass::IOHIDDeviceClass()
     
     fElementCount 		= 0;
     fElements 			= NULL;
+	
+	fCurrentValuesMappedMemory  = NULL;
+	fCurrentValuesMappedMemorySize = NULL;
+
+	fAsyncPrivateDataRef	= NULL;
+	fNotifyPrivateDataRef   = NULL;
     
     fReportHandlerElementCount	= 0;
     fReportHandlerElements	= NULL;
@@ -141,7 +148,7 @@ IOHIDDeviceClass::~IOHIDDeviceClass()
     }
     
     if (fReportHandlerQueue){
-        (*fReportHandlerQueue)->Release(fReportHandlerQueue);
+        delete fReportHandlerQueue;
         fReportHandlerQueue = 0;
     }
     
@@ -154,26 +161,38 @@ IOHIDDeviceClass::~IOHIDDeviceClass()
     if (fQueues)
         CFRelease(fQueues);
         
-    if (fDeviceProperties)
-        CFRelease(fDeviceProperties);
+    if (fDeviceElements)
+        CFRelease(fDeviceElements);
+	
+	if (fNotifyCFSource && fRunLoop)
+		CFRunLoopRemoveSource(fRunLoop, fNotifyCFSource, kCFRunLoopDefaultMode);
         
     if (fNotifyPort)
         IONotificationPortDestroy(fNotifyPort);
         
     if (fAsyncPort)
-        mach_port_deallocate(mach_task_self(), fAsyncPort);
+        IONotificationPortDestroy(fAsyncPort);
 
+	if (fAsyncPrivateDataRef) {
+		IOObjectRelease(fAsyncPrivateDataRef->notification);
+		free(fAsyncPrivateDataRef);
+	}
+		
+	if (fNotifyPrivateDataRef) {
+		IOObjectRelease(fNotifyPrivateDataRef->notification);
+		free(fNotifyPrivateDataRef);
+	}
 }
 
-HRESULT	IOHIDDeviceClass::attachQueue (IOHIDQueueClass * iohidQueue)
+HRESULT	IOHIDDeviceClass::attachQueue (IOHIDQueueClass * iohidQueue, bool reportHandler)
 {
     HRESULT res = S_OK;
     
     iohidQueue->setOwningDevice(this);
 
     // ееее todo add to list
-    if ( fQueues || 
-        ( fQueues = CFSetCreateMutable(kCFAllocatorDefault, 0, 0) ) )
+    if ( !reportHandler && ( fQueues || 
+        ( fQueues = CFSetCreateMutable(kCFAllocatorDefault, 0, 0) ) ) )
     {    
         CFSetAddValue(fQueues, (void *)iohidQueue);
     }
@@ -219,16 +238,23 @@ HRESULT IOHIDDeviceClass::detachOutputTransaction (IOHIDOutputTransactionClass *
     return res;
 }
 
+IOHIDQueueClass * IOHIDDeviceClass::createQueue(bool reportHandler)
+{
+    IOHIDQueueClass * newQueue = new IOHIDQueueClass;
+    
+    // attach the queue to us
+    attachQueue (newQueue, reportHandler);
+
+	return newQueue;
+}
+
 HRESULT IOHIDDeviceClass::queryInterfaceQueue (void **ppv)
 {
     HRESULT res = S_OK;
     
     // create the queue class
-    IOHIDQueueClass * newQueue = new IOHIDQueueClass;
-    
-    // attach the queue to us
-    attachQueue (newQueue);
-    
+    IOHIDQueueClass * newQueue = createQueue();
+
     // add a ref for the one we return
 //    newQueue->addRef();
     
@@ -301,8 +327,7 @@ start(CFDictionaryRef propertyTable, io_service_t inService)
     IOReturn 			res;
     kern_return_t 		kr;
     mach_port_t 		masterPort;
-    CFRunLoopSourceRef		runLoopSource;
-    MyPrivateData		*privateDataRef = NULL;
+    CFMutableDictionaryRef	properties;
 
     fService = inService;
     IOObjectRetain(fService);
@@ -319,15 +344,15 @@ start(CFDictionaryRef propertyTable, io_service_t inService)
         return kIOReturnError;
     
     fNotifyPort = IONotificationPortCreate(masterPort);
-    runLoopSource = IONotificationPortGetRunLoopSource(fNotifyPort);
+    fNotifyCFSource = IONotificationPortGetRunLoopSource(fNotifyPort);
     
-    fRunLoop = CFRunLoopGetCurrent();
-    CFRunLoopAddSource(fRunLoop, runLoopSource, kCFRunLoopDefaultMode);
+    fRunLoop = CFRunLoopGetMain();//CFRunLoopGetCurrent();
+    CFRunLoopAddSource(fRunLoop, fNotifyCFSource, kCFRunLoopDefaultMode);
 
-    privateDataRef = (MyPrivateData *)malloc(sizeof(MyPrivateData));
-    bzero(privateDataRef, sizeof(MyPrivateData));
+    fNotifyPrivateDataRef = (MyPrivateData *)malloc(sizeof(MyPrivateData));
+    bzero(fNotifyPrivateDataRef, sizeof(MyPrivateData));
     
-    privateDataRef->self = this;
+    fNotifyPrivateDataRef->self		= this;
 
     // Register for an interest notification of this device being removed. Use a reference to our
     // private data as the refCon which will be passed to the notification callback.
@@ -335,28 +360,37 @@ start(CFDictionaryRef propertyTable, io_service_t inService)
                                             fService,
                                             kIOGeneralInterest,
                                             IOHIDDeviceClass::_deviceNotification,
-                                            privateDataRef,
-                                            &(privateDataRef->notification));
+                                            fNotifyPrivateDataRef,
+                                            &(fNotifyPrivateDataRef->notification));
 
     // Now done with the master_port
     mach_port_deallocate(mach_task_self(), masterPort);
     masterPort = 0;
-
     
     kr = IORegistryEntryCreateCFProperties (fService,
-                                            &fDeviceProperties,
+                                            &properties,
                                             kCFAllocatorDefault,
                                             kNilOptions );
-    if (fDeviceProperties)
-    {
-        BuildElements((CFDictionaryRef) fDeviceProperties);
+
+    if ( !properties || (kr != kIOReturnSuccess))
+        return kIOReturnError;
         
-        FindReportHandlers((CFDictionaryRef) fDeviceProperties);        
-    }
+    fDeviceElements = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);    
+    if ( !fDeviceElements )
+        return kIOReturnError;
+        
+    BuildElements((CFDictionaryRef) properties, fDeviceElements);
+    FindReportHandlers((CFDictionaryRef) properties); 
+    CFRelease(properties);       
 
     return kIOReturnSuccess;
 }
 
+// RY: There are 2 General Interest notification event sources.
+// One is operating on the main run loop via fNotifyPort and is internal 
+// to the IOHIDDeviceClass.  The other is used by the client to get removal 
+// notification via fAsyncPort.  This method is used by both and disguished 
+// by the port in the refcon.
 void IOHIDDeviceClass::_deviceNotification( void *refCon,
                                             io_service_t service,
                                             natural_t messageType,
@@ -377,42 +411,56 @@ void IOHIDDeviceClass::_deviceNotification( void *refCon,
     switch(messageType)
     {
         case kIOMessageServiceIsTerminated:
-                
+				
             self->fIsTerminated = true;
             
-            if (!self->fRemovalCallback)
-                return;
+			if ( privateDataRef != self->fAsyncPrivateDataRef)
+				break;
             
-            ((IOHIDCallbackFunction)self->fRemovalCallback)(
-                                            self->fRemovalTarget,
-                                            kIOReturnSuccess,
-                                            self->fRemovalRefcon,
-                                            (void *)&(self->fHIDDevice));
+            if (self->fRemovalCallback)
+            {            
+                ((IOHIDCallbackFunction)self->fRemovalCallback)(
+                                                self->fRemovalTarget,
+                                                kIOReturnSuccess,
+                                                self->fRemovalRefcon,
+                                                (void *)&(self->fHIDDevice));
+            }
             // Free up the notificaiton
             IOObjectRelease(privateDataRef->notification);
-            free(privateDataRef);
+            free(self->fAsyncPrivateDataRef);
+			self->fAsyncPrivateDataRef = 0;
             break;
         
         case kIOMessageServiceIsRequestingClose:
-            if ((options == kIOHIDOptionsTypeSeizeDevice) &&
+			if ( privateDataRef != self->fNotifyPrivateDataRef)
+				break;
+
+            if ((options & kIOHIDOptionsTypeSeizeDevice) &&
                 (options != self->fCachedFlags))
             {
-                self->fIsSeized = true;
                 self->stopAllQueues(true);
                 if (self->fReportHandlerQueue)
-                    (*self->fReportHandlerQueue)->stop(self->fReportHandlerQueue);
+                    self->fReportHandlerQueue->stop();
+				self->close();
+                self->fIsSeized = true;
             }
             break;
             
         case kIOMessageServiceWasClosed:
+			if ( privateDataRef != self->fNotifyPrivateDataRef)
+				break;
+
             if (self->fIsSeized &&
-                (options == kIOHIDOptionsTypeSeizeDevice) &&
+                (options & kIOHIDOptionsTypeSeizeDevice) &&
                 (options != self->fCachedFlags))
             {
                 self->fIsSeized = false;
+
+				self->open(self->fCachedFlags);
+
                 self->startAllQueues(true);
                 if (self->fReportHandlerQueue)
-                    (*self->fReportHandlerQueue)->start(self->fReportHandlerQueue);
+                    self->fReportHandlerQueue->start();
             }
             break;
     }    
@@ -438,8 +486,8 @@ createAsyncEventSource(CFRunLoopSourceRef *source)
     context.release = NULL;
     context.copyDescription = NULL;
 
-    cfPort = CFMachPortCreateWithPort(NULL, fAsyncPort,
-                (CFMachPortCallBack) IODispatchCalloutFromMessage,
+    cfPort = CFMachPortCreateWithPort(NULL, IONotificationPortGetMachPort(fAsyncPort),
+                (CFMachPortCallBack) _cfmachPortCallback,
                 &context, &shouldFreeInfo);
     if (!cfPort)
         return kIOReturnNoMemory;
@@ -462,39 +510,58 @@ CFRunLoopSourceRef IOHIDDeviceClass::getAsyncEventSource()
 
 IOReturn IOHIDDeviceClass::createAsyncPort(mach_port_t *port)
 {
-    IOReturn ret;
+    IOReturn		ret;
+    mach_port_t		masterPort;
 
     connectCheck();
     
     // If we already have a port, don't create a new one.
     if (fAsyncPort) {
         if (port)
-            *port = fAsyncPort;
+            *port = IONotificationPortGetMachPort(fAsyncPort);
         return kIOReturnSuccess;
     }
 
-    ret = IOCreateReceivePort(kOSAsyncCompleteMessageID, &fAsyncPort);
-    if (kIOReturnSuccess == ret) {
+    // First create a master_port for my task
+    ret = IOMasterPort(MACH_PORT_NULL, &masterPort);
+    if (ret || !masterPort)
+        return kIOReturnError;
+
+	fAsyncPort = IONotificationPortCreate(masterPort);
+	
+    if (fAsyncPort) {
         if (port)
-            *port = fAsyncPort;
+            *port = IONotificationPortGetMachPort(fAsyncPort);
 
         if (fIsOpen) {
-            natural_t asyncRef[1];
-            mach_msg_type_number_t len = 0;
-        
-            // async kIOCDBUserClientSetAsyncPort,  kIOUCScalarIScalarO,    0,	0
-            return io_async_method_structureI_structureO(
-                    fConnection, fAsyncPort, asyncRef, 1,
-                    kIOHIDLibUserClientSetAsyncPort, NULL, 0, NULL, &len);
+			ret = finishAsyncPortSetup();
         }
     }
+    
+	mach_port_deallocate(mach_task_self(), masterPort);
+    masterPort = 0;
 
     return ret;
 }
 
+IOReturn IOHIDDeviceClass::finishAsyncPortSetup()
+{
+	natural_t				asyncRef[1];
+	mach_msg_type_number_t  len = 0;
+			
+	finishReportHandlerQueueSetup();
+
+    fAsyncPortSetupDone = true;
+
+	// async kIOCDBUserClientSetAsyncPort,  kIOUCScalarIScalarO,    0,	0
+	return io_async_method_scalarI_scalarO(
+			fConnection, IONotificationPortGetMachPort(fAsyncPort), asyncRef, 1,
+			kIOHIDLibUserClientSetAsyncPort, NULL, 0, NULL, &len);
+}
+
 mach_port_t IOHIDDeviceClass::getAsyncPort()
 {
-    return fAsyncPort;
+    return IONotificationPortGetMachPort(fAsyncPort);
 }
 
 IOReturn IOHIDDeviceClass::open(UInt32 flags)
@@ -524,36 +591,33 @@ IOReturn IOHIDDeviceClass::open(UInt32 flags)
     fIsOpen = true;
     fIsSeized = false;
 
-    if (fAsyncPort) {
-        natural_t asyncRef[1];
-        mach_msg_type_number_t len = 0;
-    
-        // async 
-        // kIOHIDLibUserClientSetAsyncPort,  kIOUCScalarIScalarO,    0,	0
-        ret = io_async_method_scalarI_scalarO(
-                fConnection, fAsyncPort, asyncRef, 1,
-                kIOHIDLibUserClientSetAsyncPort, NULL, 0, NULL, &len);
-        if (ret != kIOReturnSuccess) {
+    if (!fAsyncPortSetupDone && fAsyncPort) {
+		ret = finishAsyncPortSetup();
+
+		if (ret != kIOReturnSuccess) {
             close();
             return ret;
         }
     }
     
     // get the shared memory
-    vm_address_t address = nil;
-    vm_size_t size = 0;
-    
-    ret = IOConnectMapMemory (	fConnection, 
-                                IOHIDLibUserClientElementValuesType, 
-                                mach_task_self(), 
-                                &address, 
-                                &size, 
-                                kIOMapAnywhere	);
-    if (ret == kIOReturnSuccess)
-    {
-        fCurrentValuesMappedMemory = address;
-        fCurrentValuesMappedMemorySize = size;
-    }
+	if ( !fCurrentValuesMappedMemory )
+	{
+		vm_address_t address = nil;
+		vm_size_t size = 0;
+		
+		ret = IOConnectMapMemory (	fConnection, 
+									IOHIDLibUserClientElementValuesType, 
+									mach_task_self(), 
+									&address, 
+									&size, 
+									kIOMapAnywhere	);
+		if (ret == kIOReturnSuccess)
+		{
+			fCurrentValuesMappedMemory = address;
+			fCurrentValuesMappedMemorySize = size;
+		}
+	}
     
     return ret;
 }
@@ -599,12 +663,38 @@ IOReturn IOHIDDeviceClass::setRemovalCallback(
                                    IOHIDCallbackFunction 	removalCallback,
                                    void *			removalTarget,
                                    void *			removalRefcon)
-{
-    fRemovalCallback	= removalCallback;
-    fRemovalTarget	= removalTarget;
-    fRemovalRefcon	= removalRefcon;
+{	
+	IOReturn ret = kIOReturnSuccess;
 
-    return kIOReturnSuccess;
+	if (!fAsyncPrivateDataRef)
+	{
+		
+		fAsyncPrivateDataRef = (MyPrivateData *)malloc(sizeof(MyPrivateData));
+		bzero(fAsyncPrivateDataRef, sizeof(MyPrivateData));
+		
+		fAsyncPrivateDataRef->self		= this;
+
+        if (!fAsyncPort) {     
+            ret = createAsyncPort(0);
+            if (kIOReturnSuccess != ret)
+                return ret;
+        }
+
+		// Register for an interest notification of this device being removed. Use a reference to our
+		// private data as the refCon which will be passed to the notification callback.
+		ret = IOServiceAddInterestNotification( fAsyncPort,
+												fService,
+												kIOGeneralInterest,
+												IOHIDDeviceClass::_deviceNotification,
+												fAsyncPrivateDataRef,
+												&(fAsyncPrivateDataRef->notification));
+	}
+	
+    fRemovalCallback    = removalCallback;
+    fRemovalTarget      = removalTarget;
+    fRemovalRefcon      = removalRefcon;
+
+    return ret;
 }
 
 IOReturn IOHIDDeviceClass::getElementValue(IOHIDElementCookie	elementCookie,
@@ -618,7 +708,8 @@ IOReturn IOHIDDeviceClass::getElementValue(IOHIDElementCookie	elementCookie,
     // been processed.  We should query the element
     //  to get the current value.
     if ( (*(UInt64 *)&valueEvent->timestamp == 0) && 
-        (kr == kIOReturnSuccess))
+        (kr == kIOReturnSuccess) && 
+        (valueEvent->type == kIOHIDElementTypeFeature))
     {
         kr = queryElementValue (elementCookie,
                             valueEvent,
@@ -643,18 +734,16 @@ IOReturn IOHIDDeviceClass::setElementValue(
     kern_return_t           	kr = kIOReturnBadArgument;
     IOHIDElementStruct		element;
     
+    allChecks();
+
     if (!getElement(elementCookie, &element))
         return kr;
-        
-
 
     // we are only interested feature and output elements
     if ((element.type != kIOHIDElementTypeFeature) && 
             (element.type != kIOHIDElementTypeOutput))
         return kr;
                 
-    allChecks();
-
     // get ptr to shared memory for this element
     if (element.valueLocation < fCurrentValuesMappedMemorySize)
     {
@@ -748,6 +837,8 @@ IOReturn IOHIDDeviceClass::fillElementValue(IOHIDElementCookie		elementCookie,
                                             IOHIDEventStruct *		valueEvent)
 {
     IOHIDElementStruct	element;
+
+    allChecks();
     
     if (!getElement(elementCookie, &element) || (element.type == kIOHIDElementTypeCollection))
         return kIOReturnBadArgument;
@@ -757,9 +848,7 @@ IOReturn IOHIDDeviceClass::fillElementValue(IOHIDElementCookie		elementCookie,
     void *		longValue = 0;
     UInt32		longValueSize = 0;
     UInt64		timestamp = 0;
-    
-    allChecks();
-    
+        
     // get ptr to shared memory for this element
     if (element.valueLocation < fCurrentValuesMappedMemorySize)
     {
@@ -855,7 +944,7 @@ IOHIDDeviceClass::setReport (	IOHIDReportType			reportType,
         asyncRef[kIOAsyncCalloutFuncIndex] = (natural_t) _hidReportCallback;
         asyncRef[kIOAsyncCalloutRefconIndex] = (natural_t) hidRefcon;
     
-        ret = io_async_method_scalarI_scalarO( fConnection, fAsyncPort, asyncRef, kIOAsyncCalloutCount, kIOHIDLibUserClientAsyncSetReport, in, 5, NULL, &len);
+        ret = io_async_method_scalarI_scalarO( fConnection, IONotificationPortGetMachPort(fAsyncPort), asyncRef, kIOAsyncCalloutCount, kIOHIDLibUserClientAsyncSetReport, in, 5, NULL, &len);
     
     }
     else
@@ -935,7 +1024,7 @@ IOHIDDeviceClass::getReport (	IOHIDReportType			reportType,
         asyncRef[kIOAsyncCalloutFuncIndex] = (natural_t) _hidReportCallback;
         asyncRef[kIOAsyncCalloutRefconIndex] = (natural_t) hidRefcon;
     
-        ret = io_async_method_scalarI_scalarO( fConnection, fAsyncPort, asyncRef, kIOAsyncCalloutCount, kIOHIDLibUserClientAsyncGetReport, in, 5, NULL, &len);
+        ret = io_async_method_scalarI_scalarO( fConnection, IONotificationPortGetMachPort(fAsyncPort), asyncRef, kIOAsyncCalloutCount, kIOHIDLibUserClientAsyncGetReport, in, 5, NULL, &len);
     
     }
     else
@@ -995,66 +1084,66 @@ static bool CompareProperty( CFDictionaryRef element, CFDictionaryRef matching, 
 
 IOReturn 
 IOHIDDeviceClass::copyMatchingElements(CFDictionaryRef matchingDict, CFArrayRef *elements)
-{
-    CFMutableArrayRef	tempElements = 0;
-    CFDictionaryRef	element;
-    IOReturn		ret = kIOReturnSuccess;
-    
+{    
     if (!elements)
+        return kIOReturnBadArgument;
+     
+    if ( matchingDict )
     {
-        ret = kIOReturnBadArgument;
-        goto GET_MATCHING_ELEMENT_FINISH;
-    }
-        
-    if (!(tempElements = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks)))
-    {
-        ret = kIOReturnNoMemory;
-        goto GET_MATCHING_ELEMENT_FINISH;
-    }
-        
-    for (int i=0; i<fElementCount; i++)
-    {
-        if ( !(element = fElements[i].elementDictionaryRef) )
-            continue;
-            
-        // Compare properties.        
-        if (!matchingDict ||
-            (CompareProperty(element, matchingDict, CFSTR(kIOHIDElementCookieKey))
-            && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementTypeKey))
-            && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementCollectionTypeKey))
-            && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementUsageKey))
-            && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementUsagePageKey))
-            && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementMinKey))
-            && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementMaxKey))
-            && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementScaledMinKey))
-            && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementScaledMaxKey))
-            && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementSizeKey))
-            && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementReportSizeKey))
-            && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementReportCountKey))
-            && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementIsArrayKey))
-            && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementIsRelativeKey))
-            && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementIsWrappingKey))
-            && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementIsNonLinearKey))
-            && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementHasPreferredStateKey))
-            && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementHasNullStateKey))
-            && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementVendorSpecificKey))
-            && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementUnitKey))
-            && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementUnitExponentKey))
-            && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementNameKey))
-            && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementValueLocationKey))))
+        CFMutableArrayRef	tempElements = 0;
+        CFDictionaryRef     element;
+
+        if (!(tempElements = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks)))
         {
-            CFArrayAppendValue(tempElements, element);
+            *elements = 0;
+            return kIOReturnNoMemory;
         }
+            
+        for (int i=0; i<fElementCount; i++)
+        {
+            if ( !(element = fElements[i].elementDictionaryRef) )
+                continue;
+                
+            // Compare properties.        
+            if (CompareProperty(element, matchingDict, CFSTR(kIOHIDElementCookieKey))
+                && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementTypeKey))
+                && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementCollectionTypeKey))
+                && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementUsageKey))
+                && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementUsagePageKey))
+                && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementMinKey))
+                && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementMaxKey))
+                && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementScaledMinKey))
+                && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementScaledMaxKey))
+                && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementSizeKey))
+                && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementReportSizeKey))
+                && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementReportCountKey))
+                && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementIsArrayKey))
+                && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementIsRelativeKey))
+                && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementIsWrappingKey))
+                && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementIsNonLinearKey))
+                && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementHasPreferredStateKey))
+                && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementHasNullStateKey))
+                && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementVendorSpecificKey))
+                && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementUnitKey))
+                && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementUnitExponentKey))
+                && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementNameKey))
+                && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementValueLocationKey))
+                && CompareProperty(element, matchingDict, CFSTR(kIOHIDElementDuplicateIndexKey)))
+            {            
+                CFArrayAppendValue(tempElements, element);
+            }
+        }
+
+        *elements = tempElements;
     }
-    
-    if (CFArrayGetCount(tempElements) == 0)
+    else if (!(*elements = CFArrayCreateCopy(kCFAllocatorDefault, fDeviceElements)))
+        return kIOReturnNoMemory;    
+
+    if (CFArrayGetCount(*elements) == 0)
     {
-        CFRelease(tempElements);
-        tempElements = 0;
+        CFRelease(*elements);
+        *elements = 0;
     }
-    
-GET_MATCHING_ELEMENT_FINISH:
-    *elements = tempElements;
     
     return kIOReturnSuccess;
 }
@@ -1067,7 +1156,6 @@ IOReturn IOHIDDeviceClass::setInterruptReportHandlerCallback(
                                 void * 				callbackRefcon)
                                 
 {
-    CFRunLoopSourceRef	evSource;
     IOReturn		ret = kIOReturnSuccess;
 
     fInputReportCallback 	= callback;
@@ -1079,49 +1167,74 @@ IOReturn IOHIDDeviceClass::setInterruptReportHandlerCallback(
     // Lazy set up of the queue.
     if ( !fReportHandlerQueue )
     {
-	if ( !( fReportHandlerQueue = allocQueue() ) )
-            return kIOReturnError;
-            
-        CFSetRemoveValue(fQueues, (void *)fReportHandlerQueue);
-    
-        ret = (*fReportHandlerQueue)->create(fReportHandlerQueue, 0, 8);
+		fReportHandlerQueue = createQueue(true);
+
+        ret = fReportHandlerQueue->create(0, 8);
         
         if (ret != kIOReturnSuccess)
             goto SET_REPORT_HANDLER_CLEANUP;
         
         for (int i=0; i<fReportHandlerElementCount; i++)
         {
-            ret = (*fReportHandlerQueue)->addElement(fReportHandlerQueue, (IOHIDElementCookie)fReportHandlerElements[i].cookie, 0);
+            ret = fReportHandlerQueue->addElement((IOHIDElementCookie)fReportHandlerElements[i].cookie, 0);
     
             if (ret != kIOReturnSuccess)
                 goto SET_REPORT_HANDLER_CLEANUP;
         }
 
-        ret = (*fReportHandlerQueue)->createAsyncEventSource(fReportHandlerQueue, &evSource);
-        
-        if (ret != kIOReturnSuccess)
-            goto SET_REPORT_HANDLER_CLEANUP;
-        
-        ret = (*fReportHandlerQueue)->setEventCallout(fReportHandlerQueue, _hidReportHandlerCallback, this, 0);
-        
-        if (ret != kIOReturnSuccess)
-            goto SET_REPORT_HANDLER_CLEANUP;
-        
-        CFRunLoopAddSource(CFRunLoopGetCurrent(), evSource, kCFRunLoopDefaultMode);
-        
-        ret = (*fReportHandlerQueue)->start(fReportHandlerQueue);
-
-        if (ret != kIOReturnSuccess)
-            goto SET_REPORT_HANDLER_CLEANUP;
+		
+		if ( fAsyncPort && fIsOpen )
+		{
+			ret = finishReportHandlerQueueSetup();
+			if (ret != kIOReturnSuccess)
+				goto SET_REPORT_HANDLER_CLEANUP;
+		}
     }    
     
     return kIOReturnSuccess;
     
 SET_REPORT_HANDLER_CLEANUP:
-    (*fReportHandlerQueue)->Release(fReportHandlerQueue);
+    delete fReportHandlerQueue;
     fReportHandlerQueue = 0;
     
     return ret;
+}
+
+IOReturn IOHIDDeviceClass::finishReportHandlerQueueSetup()
+{
+	IOReturn ret = kIOReturnError;
+	
+	if ( fReportHandlerQueue )
+	{
+		do {
+			ret = fReportHandlerQueue->setEventCallout(_hidReportHandlerCallback, this, 0);
+			
+			if (ret != kIOReturnSuccess) break;
+				
+			ret = fReportHandlerQueue->setAsyncPort(IONotificationPortGetMachPort(fAsyncPort));
+			
+			if (ret != kIOReturnSuccess) break;
+					
+			ret = fReportHandlerQueue->start();
+
+			if (ret != kIOReturnSuccess) break;
+            			
+		} while ( false );
+	}
+	return ret;
+}
+
+void IOHIDDeviceClass::_cfmachPortCallback(CFMachPortRef cfPort, mach_msg_header_t *msg, CFIndex size, void *info) {
+    mach_msg_header_t *			msgh = (mach_msg_header_t *)msg;
+	IOHIDDeviceClass *			self = (IOHIDDeviceClass *) info;
+	
+	if ( !self )
+		return;
+		
+    if( msgh->msgh_id == kOSNotificationMessageID)
+		IODispatchCalloutFromMessage(cfPort, msg, info);
+	else if ( self->fReportHandlerQueue )
+		IOHIDQueueClass::queueEventSourceCallback(cfPort, msg, size, self->fReportHandlerQueue);
 }
 
 void IOHIDDeviceClass::_hidReportHandlerCallback(void * target, IOReturn result, void * refcon, void * sender)
@@ -1129,17 +1242,16 @@ void IOHIDDeviceClass::_hidReportHandlerCallback(void * target, IOReturn result,
     IOHIDEventStruct 		event;
     IOHIDElementStruct		element;
     IOHIDDeviceClass *		self = (IOHIDDeviceClass *)target;
-    IOHIDQueueInterface ** 	queue = self->fReportHandlerQueue;
+    IOHIDQueueClass *		queue = self->fReportHandlerQueue;
     AbsoluteTime 		zeroTime = {0,0};
     UInt32			size = 0;
 
     if (!self || !self->fIsOpen)
         return;
             
-    while (result == kIOReturnSuccess) {
-        result = (*queue)->getNextEvent(queue, &event, zeroTime, 0);
+    while ((result = queue->getNextEvent( &event, zeroTime, 0)) == kIOReturnSuccess) {
         
-        if ( !result && (event.longValueSize == 0)) 
+        if ( event.longValueSize == 0)
         {                        
             self->getElement(event.elementCookie, &element);                
             size = element.bytes;
@@ -1149,7 +1261,7 @@ void IOHIDDeviceClass::_hidReportHandlerCallback(void * target, IOReturn result,
             self->convertWordToByte((const UInt32 *)(&(event.value)), (UInt8 *)self->fInputReportBuffer, size << 3);
             
         }
-        else if (!result && event.longValueSize != 0 && (event.longValue != NULL))
+        else if (event.longValueSize != 0 && (event.longValue != NULL))
         {
             size = min(self->fInputReportBufferSize, event.longValueSize);
             bcopy(event.longValue, self->fInputReportBuffer, size);
@@ -1279,14 +1391,20 @@ IOReturn IOHIDDeviceClass::startAllQueues(bool deviceInitiated)
     if ( fQueues )
     {
         int			queueCount = CFSetGetCount(fQueues);
-        IOHIDQueueClass *	queues[queueCount];
+        IOHIDQueueClass **	queues = NULL;
+        
+        queues = (IOHIDQueueClass **)malloc(sizeof(IOHIDQueueClass *) * queueCount);
     
         CFSetGetValues(fQueues, (const void **)queues);
         
-        for (int i=0; queues && i<queueCount && ret==kIOReturnSuccess; i++)
+        for (int i=0; queues && i<queueCount; i++)
         {
             ret = queues[i]->start(deviceInitiated);
         }
+        
+        if (queues)
+            free(queues);
+
     }
 
     return ret;
@@ -1299,14 +1417,20 @@ IOReturn IOHIDDeviceClass::stopAllQueues(bool deviceInitiated)
     if ( fQueues )
     {
         int			queueCount = CFSetGetCount(fQueues);
-        IOHIDQueueClass *	queues[queueCount];
+        IOHIDQueueClass **	queues	= NULL;
     
+        queues = (IOHIDQueueClass **)malloc(sizeof(IOHIDQueueClass *) * queueCount);
+
         CFSetGetValues(fQueues, (const void **)queues);
         
         for (int i=0; queues && i<queueCount && ret==kIOReturnSuccess; i++)
         {
             ret = queues[i]->stop(deviceInitiated);
         }
+        
+        if (queues)
+            free(queues);
+
     }
 
     return ret;
@@ -1517,7 +1641,7 @@ IOHIDDeviceClass::deviceSetInterruptReportHandlerCallback(void * 	self,
 
 // End added methods
 
-kern_return_t IOHIDDeviceClass::BuildElements (CFDictionaryRef properties)
+kern_return_t IOHIDDeviceClass::BuildElements (CFDictionaryRef properties, CFMutableArrayRef array)
 {
     kern_return_t           	kr = kIOReturnSuccess;
     long			allocatedElementCount;
@@ -1531,7 +1655,7 @@ kern_return_t IOHIDDeviceClass::BuildElements (CFDictionaryRef properties)
     allocatedElementCount = 0;
     
     // recursively add leaf elements
-    kr = this->CreateLeafElements (properties, 0, &allocatedElementCount, CFSTR(kIOHIDElementKey), fElements);
+    kr = CreateLeafElements (properties, array, 0, &allocatedElementCount, CFSTR(kIOHIDElementKey), fElements);
     
 //    printf ("%ld elements allocated of %ld expected\n", allocatedElementCount, fElementCount);
     
@@ -1552,6 +1676,7 @@ struct StaticWalkElementsParams
 {
     IOHIDDeviceClass *		iohiddevice;
     CFDictionaryRef 		properties;
+    CFMutableArrayRef		array;
     CFStringRef			key;
     IOHIDElementStruct *	elements;
     long			value;
@@ -1623,6 +1748,18 @@ long IOHIDDeviceClass::CountElements (CFDictionaryRef properties, CFTypeRef elem
             // recursively count leaf elements
             count += this->CountElements ((CFDictionaryRef) element, subElements, key);
         }
+        
+        if (CFDictionaryGetValue ((CFDictionaryRef) element, CFSTR(kIOHIDElementDuplicateValueSizeKey)))
+        {
+            CFNumberRef numberRef;
+            UInt32      duplicateCount;
+            
+            if ( (numberRef = (CFNumberRef) CFDictionaryGetValue ((CFDictionaryRef) element, CFSTR(kIOHIDElementReportCountKey)))
+                 && CFNumberGetValue(numberRef, kCFNumberLongType, &duplicateCount))
+            {
+                count += duplicateCount;
+            }
+        }
     }
     // this case should not happen, something else was found
     else
@@ -1642,14 +1779,14 @@ void IOHIDDeviceClass::StaticCreateLeafElements (const void * value, void * para
     StaticWalkElementsParams * params = (StaticWalkElementsParams *) parameter;
     
     // increment count by this sub element
-    kr = params->iohiddevice->CreateLeafElements(params->properties, (CFTypeRef) value, (long *) params->data, params->key, params->elements);
+    kr = params->iohiddevice->CreateLeafElements(params->properties, params->array, (CFTypeRef) value, (long *) params->data, params->key, params->elements);
     
     if (params->value == kIOReturnSuccess)
         params->value = kr;
 }
 
 // this function recersively creates the leaf elements, if zero is passed as element, it starts at top
-kern_return_t IOHIDDeviceClass::CreateLeafElements (CFDictionaryRef properties, 
+kern_return_t IOHIDDeviceClass::CreateLeafElements (CFDictionaryRef properties, CFMutableArrayRef array,
                     CFTypeRef element, long * allocatedElementCount, CFStringRef key, IOHIDElementStruct * elements)
 {
     kern_return_t 	kr = kIOReturnSuccess;
@@ -1660,6 +1797,7 @@ kern_return_t IOHIDDeviceClass::CreateLeafElements (CFDictionaryRef properties,
     {
         // get the elements object
         element = CFDictionaryGetValue (properties, key);
+        properties = 0;
         isRootItem = true;
     }
     
@@ -1671,12 +1809,13 @@ kern_return_t IOHIDDeviceClass::CreateLeafElements (CFDictionaryRef properties,
     {
         // setup param block for array callback
         StaticWalkElementsParams params;
-        params.iohiddevice = this;
-        params.properties = properties;
-        params.key = key;
-        params.elements = elements;
-        params.value = kIOReturnSuccess;
-        params.data = allocatedElementCount;
+        params.iohiddevice 	= this;
+        params.properties 	= properties;
+        params.array 		= array;
+        params.key          = key;
+        params.elements 	= elements;
+        params.value 		= kIOReturnSuccess;
+        params.data 		= allocatedElementCount;
         
         // count the size of the array
         CFRange range = { 0, CFArrayGetCount((CFArrayRef) element) };
@@ -1691,15 +1830,29 @@ kern_return_t IOHIDDeviceClass::CreateLeafElements (CFDictionaryRef properties,
     // either a collection element or a leaf element
     else if (type == CFDictionaryGetTypeID())
     {
-        CFDictionaryRef dictionary = (CFDictionaryRef) element;
-
-        IOHIDElementStruct	hidelement;
-        CFTypeRef 		object;
-        long 			number;
+        CFMutableDictionaryRef  dictionary  = (CFMutableDictionaryRef) element;
+        CFDictionaryRef         tempElement = 0;
+        IOHIDElementStruct      hidelement;
+        CFTypeRef               object;
+        long                    number;
         
+        // Check to see if this is a duplicate item.  if so, skip processing.
+        object = CFDictionaryGetValue (dictionary, CFSTR(kIOHIDElementDuplicateIndexKey));
+        if (object != 0) return kr;
+
         // get the actual dictionary ref
-        hidelement.elementDictionaryRef = dictionary;
-        hidelement.parentElementDictionaryRef = (!isRootItem) ? properties : 0;
+        if ( array )
+        {            
+            if (!isRootItem && properties)
+                CFDictionarySetValue(dictionary, CFSTR(kIOHIDElementParentCollectionKey), properties);
+
+            tempElement = CFDictionaryCreateCopy(kCFAllocatorDefault, dictionary);
+
+            CFArrayAppendValue(array, tempElement);
+            CFRelease(tempElement);
+
+            hidelement.elementDictionaryRef = tempElement;
+        }
         
         // get the cookie element
         object = CFDictionaryGetValue (dictionary, CFSTR(kIOHIDElementCookieKey));
@@ -1717,7 +1870,7 @@ kern_return_t IOHIDDeviceClass::CreateLeafElements (CFDictionaryRef properties,
             return kIOReturnInternalError;
         hidelement.type = number;
 
-        if ( ! CFStringCompare( key, CFSTR(kIOHIDElementKey), 0 ) )
+        if ( CFStringCompare( key, CFSTR(kIOHIDElementKey), 0 ) == kCFCompareEqualTo)
         {
             // get the element usage
             object = CFDictionaryGetValue (dictionary, CFSTR(kIOHIDElementUsageKey));
@@ -1744,7 +1897,11 @@ kern_return_t IOHIDDeviceClass::CreateLeafElements (CFDictionaryRef properties,
             elements[(*allocatedElementCount)++] = hidelement;
 
             // recursively create leaf elements
-            kr = this->CreateLeafElements (dictionary, subElements, allocatedElementCount, key, elements);
+            tempElement = CFDictionaryCreateCopy(kCFAllocatorDefault, dictionary);
+            
+            kr = this->CreateLeafElements (tempElement, array, subElements, allocatedElementCount, key, elements);
+            
+            CFRelease(tempElement);
         }
         // otherwise, this is a leaf, allocate and fill in our data
         else
@@ -1788,6 +1945,83 @@ kern_return_t IOHIDDeviceClass::CreateLeafElements (CFDictionaryRef properties,
             
             // allocate and copy the data
             elements[(*allocatedElementCount)++] = hidelement;
+
+            // Check for duplicates
+            do
+            {
+                CFTypeRef   duplicateReportBitsNumber   = 0;
+                UInt32      duplicateSizeOffset         = 0;
+                UInt32      duplicateCount              = 0;
+                
+                object = CFDictionaryGetValue (dictionary, CFSTR(kIOHIDElementDuplicateValueSizeKey));
+                if (object == 0 || CFGetTypeID(object) != CFNumberGetTypeID())
+                    break;
+                if (!CFNumberGetValue((CFNumberRef) object, kCFNumberLongType, &duplicateSizeOffset))
+                    break;
+
+                object = CFDictionaryGetValue (dictionary, CFSTR(kIOHIDElementReportCountKey));
+                if (object == 0 || CFGetTypeID(object) != CFNumberGetTypeID())
+                    break;
+                if (!CFNumberGetValue((CFNumberRef) object, kCFNumberLongType, &duplicateCount))
+                    break;
+
+                object = CFDictionaryGetValue (dictionary, CFSTR(kIOHIDElementReportSizeKey));
+                if (object == 0 || CFGetTypeID(object) != CFNumberGetTypeID())
+                    break;
+                if (!CFNumberGetValue((CFNumberRef) object, kCFNumberLongType, &number))
+                    break;
+                hidelement.bytes = number >> 3;
+                hidelement.bytes += (number % 8) ? 1 : 0;
+                duplicateReportBitsNumber = object;
+
+                for ( unsigned i=0; i<duplicateCount; i++)
+                {
+                    hidelement.cookie ++;
+                    hidelement.valueLocation += duplicateSizeOffset;
+
+                    hidelement.elementDictionaryRef = 0;
+
+                    if ( array )
+                    {
+                        CFMutableDictionaryRef tempMutableDict = CFDictionaryCreateMutableCopy(kCFAllocatorDefault, 0, dictionary);
+
+                        if ( tempMutableDict )
+                        {
+
+                            CFDictionaryRemoveValue(tempMutableDict, CFSTR(kIOHIDElementReportSizeKey));
+                            CFDictionaryRemoveValue(tempMutableDict, CFSTR(kIOHIDElementReportCountKey));
+
+                            CFDictionarySetValue(tempMutableDict, CFSTR(kIOHIDElementSizeKey), duplicateReportBitsNumber);
+
+                            object = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &hidelement.cookie);
+                            CFDictionarySetValue(tempMutableDict, CFSTR(kIOHIDElementCookieKey), object);
+                            CFRelease( object );
+                            
+                            object = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &hidelement.valueLocation);
+                            CFDictionarySetValue(tempMutableDict, CFSTR(kIOHIDElementValueLocationKey), object);
+                            CFRelease( object );
+
+                            object = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &i);
+                            CFDictionarySetValue(tempMutableDict, CFSTR(kIOHIDElementDuplicateIndexKey), object);
+                            CFRelease( object );
+                        
+                            tempElement = CFDictionaryCreateCopy(kCFAllocatorDefault, tempMutableDict);
+
+                            CFArrayAppendValue(array, tempElement);
+                            CFRelease(tempMutableDict);
+                            CFRelease(tempElement);
+
+                            hidelement.elementDictionaryRef = tempElement;
+                        }
+                        
+                    }
+                
+                    elements[(*allocatedElementCount)++] = hidelement;
+
+                }
+                
+            } while ( 0 );
+
         }
     }
     // this case should not happen, something else was found
@@ -1805,14 +2039,14 @@ kern_return_t IOHIDDeviceClass::FindReportHandlers(CFDictionaryRef properties)
 
 
     // count the number of leaves and allocate
-    fReportHandlerElementCount = this->CountElements(properties, 0, CFSTR("InputReportElements"));
+    fReportHandlerElementCount = CountElements(properties, 0, CFSTR(kIOHIDInputReportElementsKey));
     fReportHandlerElements = new IOHIDElementStruct[fReportHandlerElementCount];
     
     // initialize allocation to zero
     allocatedElementCount = 0;
     
     // recursively add leaf elements
-    kr = this->CreateLeafElements (properties, 0, &allocatedElementCount, CFSTR("InputReportElements"), fReportHandlerElements);
+    kr = CreateLeafElements (properties, 0, 0, &allocatedElementCount, CFSTR(kIOHIDInputReportElementsKey), fReportHandlerElements);
     
 //    printf ("%ld elements allocated of %ld expected\n", allocatedElementCount, fElementCount);
     
@@ -1824,11 +2058,11 @@ kern_return_t IOHIDDeviceClass::FindReportHandlers(CFDictionaryRef properties)
 
 IOHIDElementType IOHIDDeviceClass::getElementType(IOHIDElementCookie elementCookie)
 {
-    IOHIDElementType type = (IOHIDElementType) 0;
+    IOHIDElementStruct      element;
+    IOHIDElementType        type = (IOHIDElementType) 0;
     
-    for (long index = 0; index < fElementCount; index++)
-        if (fElements[index].cookie == (unsigned long) elementCookie)
-            type = (IOHIDElementType) fElements[index].type;
+    if (getElement(elementCookie, &element))
+            type = (IOHIDElementType) element.type;
     
     return type;
 }

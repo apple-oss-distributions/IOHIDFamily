@@ -22,13 +22,15 @@
  * @APPLE_LICENSE_HEADER_END@
  */
 
+#include <IOKit/IOKitKeys.h>
+
 #include <IOKit/hidsystem/ev_keymap.h>
-#include <IOKit/hidsystem/IOHIKeyboard.h>
 #include <IOKit/hidsystem/IOHIDShared.h>
 #include <IOKit/hidsystem/IOHIDUsageTables.h>
 
 #include "IOHIDElement.h"
 #include "IOHIDConsumer.h"
+#include "AppleHIDUsageTables.h"
 
 
 //====================================================================================================
@@ -39,74 +41,24 @@
 
 #define DEBUGGING_LEVEL 	0
 
-// Defining scan codes for our use because usage values > NX_NUMKEYCODES
-#define kPower			0x01
-
-#define kVolumeUp		0x02
-#define kVolumeDown		0x03
-#define kVolumeMute		0x04
-
-#define kPlay			0x05
-#define kFastForward		0x06
-#define kRewind			0x07
-#define kNextTrack		0x08
-#define kPreviousTrack		0x09
-#define kEject			0x0a
-
-#define InitButtons(ptrs) 			\
-{						\
-    ptrs = 0;					\
-    ptrs ## Count = 0;				\	
-}
-
-
-#define AppendButtons(ptrs, ptr)		\
-{						\
-    UInt32 size = sizeof(UInt32 *) * ( ptrs ## Count); \
-    UInt32 ** tempPtrs = IOMalloc(size + sizeof(UInt32 *)); \
-                                                \
-    if (ptrs) {					\
-        bcopy( ptrs, tempPtrs, size );		\
-        IOFree(ptrs, size);			\
-    }						\
-    ptrs = tempPtrs;				\
-    ptrs[ ptrs ## Count ++] = ptr;		\
-}
-
-
-#define ReleaseButtons(ptrs)			\
-{						\
-    UInt32 size = sizeof(UInt32 *) * ( ptrs ## Count); \
-    IOFree(ptrs, size);				\
-    ptrs = 0;					\
-    ptrs ## Count = 0;				\
-}			
-
-#define GetButtonValues(ptrs, value)		\
-{						\
-    for (int i=0; i< ptrs ## Count ; i++)	\
-    {						\
-        value |= (ptrs[i][0] & 0x1);		\
-    }						\
-}						
-
 OSDefineMetaClassAndStructors( IOHIDConsumer, IOHIKeyboard )
 
 //====================================================================================================
 // Consumer - constructor
 //====================================================================================================
 IOHIDConsumer * 
-IOHIDConsumer::Consumer(OSArray *elements) 
+IOHIDConsumer::Consumer(bool isDispatcher) 
 {
     IOHIDConsumer *consumer = new IOHIDConsumer;
     
-    if ((consumer == 0) || !consumer->init() || 
-            !consumer->findDesiredElements(elements))
+    if ((consumer == 0) || !consumer->init())
     {
         if (consumer) consumer->release();
         return 0;
     }
-
+    
+    consumer->_isDispatcher = isDispatcher;
+    
     return consumer;
 }
 
@@ -118,306 +70,152 @@ IOHIDConsumer::init(OSDictionary *properties)
 {
   if (!super::init(properties))  return false;
   
-    _soundUpIsPressed = false;
-    _soundDownIsPressed = false;
-    
-    InitButtons(_systemPowerValuePtrs);
-    InitButtons(_systemSleepValuePtrs);
-    InitButtons(_systemWakeUpValuePtrs);
-    
-    InitButtons(_volumeIncValuePtrs);
-    InitButtons(_volumeDecValuePtrs);
-    InitButtons(_volumeMuteValuePtrs);
-
-    InitButtons(_powerValuePtrs);
-    InitButtons(_resetValuePtrs);
-    InitButtons(_sleepValuePtrs);
-    
-    InitButtons(_playValuePtrs);
-    InitButtons(_playOrPauseValuePtrs);
-    InitButtons(_playOrSkipPtrs);
-    InitButtons(_nextTrackValuePtrs);
-    InitButtons(_prevTrackValuePtrs);
-    InitButtons(_fastFowardValuePtrs);
-    InitButtons(_rewindValuePtrs);
-    InitButtons(_stopOrEjectPtrs);
-    InitButtons(_ejectValuePtrs);
-
+    _otherEventFlags 	= 0;
+    _otherCapsLockOn 	= FALSE;
+	
+	_repeat				= true;
+	setRepeatMode(_repeat);
+            
     return true;
 }
 
-void IOHIDConsumer::free()
-{
-    ReleaseButtons(_systemPowerValuePtrs);
-    ReleaseButtons(_systemSleepValuePtrs);
-    ReleaseButtons(_systemWakeUpValuePtrs);
-    
-    ReleaseButtons(_volumeIncValuePtrs);
-    ReleaseButtons(_volumeDecValuePtrs);
-    ReleaseButtons(_volumeMuteValuePtrs);
-
-    ReleaseButtons(_powerValuePtrs);
-    ReleaseButtons(_resetValuePtrs);
-    ReleaseButtons(_sleepValuePtrs);
-    
-    ReleaseButtons(_playValuePtrs);
-    ReleaseButtons(_playOrPauseValuePtrs);
-    ReleaseButtons(_playOrSkipPtrs);
-    ReleaseButtons(_nextTrackValuePtrs);
-    ReleaseButtons(_prevTrackValuePtrs);
-    ReleaseButtons(_fastFowardValuePtrs);
-    ReleaseButtons(_rewindValuePtrs);
-    ReleaseButtons(_stopOrEjectPtrs);
-    ReleaseButtons(_ejectValuePtrs);
-
-
-    super::free();
-}
-
 //====================================================================================================
-// findDesiredElements
+// start
 //====================================================================================================
-bool
-IOHIDConsumer::findDesiredElements(OSArray *elements)
+bool IOHIDConsumer::start(IOService * provider)
 {
-    IOHIDElement 	*element;
-    bool		found = false;
+    _provider = OSDynamicCast ( IOHIDEventService, provider);
     
-    if (!elements)
+    if ( !_provider )
         return false;
-    
-    for (int i=0; i<elements->getCount(); i++)
-    {
-        element = elements->getObject(i);
 
-        if (element->getUsagePage() == kHIDPage_Consumer)
-        {
-            switch(element->getUsage())
-            {
-                case kHIDUsage_Csmr_Power:
-                    AppendButtons(_powerValuePtrs, element->getElementValue()->value);
-                    found = true;
-                    break;
-                case kHIDUsage_Csmr_Reset:
-                    AppendButtons(_resetValuePtrs, element->getElementValue()->value);
-                    found = true;
-                    break;
-                case kHIDUsage_Csmr_Sleep:
-                    AppendButtons(_sleepValuePtrs, element->getElementValue()->value);
-                    found = true;
-                    break;
-                case kHIDUsage_Csmr_Play:
-                    AppendButtons(_playValuePtrs, element->getElementValue()->value);
-                    found = true;
-                    break;
-                case kHIDUsage_Csmr_PlayOrPause:
-                    AppendButtons(_playOrPauseValuePtrs, element->getElementValue()->value);
-                    found = true;
-                    break;
-                case kHIDUsage_Csmr_PlayOrSkip:
-                    AppendButtons(_playOrSkipPtrs, element->getElementValue()->value);
-                    found = true;
-                    break;
-                case kHIDUsage_Csmr_ScanNextTrack:
-                    AppendButtons(_nextTrackValuePtrs, element->getElementValue()->value);
-                     found = true;
-                    break;
-                case kHIDUsage_Csmr_ScanPreviousTrack:
-                    AppendButtons(_prevTrackValuePtrs, element->getElementValue()->value);
-                    found = true;
-                    break;
-                case kHIDUsage_Csmr_FastForward:
-                    AppendButtons(_fastFowardValuePtrs, element->getElementValue()->value);
-                    found = true;
-                    break;
-                case kHIDUsage_Csmr_Rewind:
-                    AppendButtons(_rewindValuePtrs, element->getElementValue()->value);
-                    found = true;
-                    break;
-                case kHIDUsage_Csmr_StopOrEject:
-                    AppendButtons(_stopOrEjectPtrs, element->getElementValue()->value);
-                    found = true;
-                    break;
-                case kHIDUsage_Csmr_Eject:
-                    AppendButtons(_ejectValuePtrs, element->getElementValue()->value);
-                    found = true;
-                    break;
-                case kHIDUsage_Csmr_VolumeIncrement:
-                    AppendButtons(_volumeIncValuePtrs, element->getElementValue()->value);
-                    found = true;
-                    break;
-                case kHIDUsage_Csmr_VolumeDecrement:
-                    AppendButtons(_volumeDecValuePtrs, element->getElementValue()->value);
-                    found = true;
-                    break;
-                case kHIDUsage_Csmr_Mute:
-                    AppendButtons(_volumeMuteValuePtrs, element->getElementValue()->value);
-                    found = true;
-                    break;
-                default:
-                    break;
-            }
-        }
-        else if (element->getUsagePage() == kHIDPage_GenericDesktop)
-        {
-            switch (element->getUsage())
-            {
-                case kHIDUsage_GD_SystemPowerDown:
-                    AppendButtons(_systemPowerValuePtrs, element->getElementValue()->value);
-                    found = true;
-                    break;
-                case kHIDUsage_GD_SystemSleep:
-                    AppendButtons(_systemSleepValuePtrs, element->getElementValue()->value);
-                    found = true;
-                    break;
-                case kHIDUsage_GD_SystemWakeUp:
-                    AppendButtons(_systemWakeUpValuePtrs, element->getElementValue()->value);
-                    found = true;
-                    break;
-            }
-        }
-    }
-        
-    return found;
+    setProperty(kIOHIDVirtualHIDevice, kOSBooleanTrue);
+                
+    return super::start(provider);
 }
 
-//====================================================================================================
-// handleReport
-//====================================================================================================
-void IOHIDConsumer::handleReport()
+void IOHIDConsumer::dispatchConsumerEvent(
+                                IOHIDKeyboard *             sendingkeyboardNub,
+                                AbsoluteTime                timeStamp,
+                                UInt32                      usagePage,
+                                UInt32                      usage,
+                                UInt32						value,
+                                IOOptionBits                options)
 {
-    AbsoluteTime		now;
-    bool			muteIsPressed		= false;
-    bool			ejectIsPressed		= false;
-    bool			powerIsPressed		= false;
-    bool			playIsPressed		= false;
-    bool			soundUpIsPressed 	= false;
-    bool			soundDownIsPressed	= false;
-    bool			fastForwardIsPressed	= false;
-    bool			rewindIsPressed		= false;
-    bool			nextTrackIsPressed	= false;
-    bool			prevTrackIsPressed	= false;
+    SInt32  keyCode = -1;
+    bool    repeat  = ((options & kHIDDispatchOptionKeyboardNoRepeat) == 0);
     
-    // Record current time for the keypress posting.
-    clock_get_uptime( &now );
-
-    // Get modifier states for all attached keyboards. This way, when we are queried as to
-    // what the state of event flags are, we can tell them and be correct about it.
-    FindKeyboardsAndGetModifiers();
-    
-
-    // Check and see if the states have changed since last report, if so, we'll notify whoever
-    // cares by posting the appropriate key and keystates.
-    powerIsPressed = 0;
-    GetButtonValues(_powerValuePtrs, powerIsPressed);
-    GetButtonValues(_resetValuePtrs, powerIsPressed);
-    GetButtonValues(_sleepValuePtrs, powerIsPressed);
-    GetButtonValues(_systemPowerValuePtrs, powerIsPressed);
-    GetButtonValues(_systemSleepValuePtrs, powerIsPressed);
-    GetButtonValues(_systemWakeUpValuePtrs, powerIsPressed);
-
-    playIsPressed = 0;
-    GetButtonValues(_playValuePtrs, playIsPressed);
-    GetButtonValues(_playOrPauseValuePtrs, playIsPressed);
-    GetButtonValues(_playOrSkipPtrs, playIsPressed);
-    
-    ejectIsPressed = 0;
-    GetButtonValues(_ejectValuePtrs, ejectIsPressed);
-
-    muteIsPressed = 0;
-    GetButtonValues(_volumeMuteValuePtrs, muteIsPressed);
-
-    soundUpIsPressed = 0;
-    GetButtonValues(_volumeIncValuePtrs, soundUpIsPressed);
-
-    soundDownIsPressed = 0;
-    GetButtonValues(_volumeDecValuePtrs, soundDownIsPressed);
-
-    fastForwardIsPressed = 0;
-    GetButtonValues(_fastFowardValuePtrs, fastForwardIsPressed);
-
-    rewindIsPressed = 0;
-    GetButtonValues(_rewindValuePtrs, rewindIsPressed);
-
-    nextTrackIsPressed = 0;
-    GetButtonValues(_nextTrackValuePtrs, nextTrackIsPressed);
-
-    prevTrackIsPressed = 0;
-    GetButtonValues(_prevTrackValuePtrs, prevTrackIsPressed);
-
-
-    if ( !( muteIsPressed && soundUpIsPressed && soundDownIsPressed ) )
+    if (usagePage == kHIDPage_Consumer)
     {
-        if ( muteIsPressed != _muteIsPressed )
+        switch(usage)
         {
-                // Mute state has changed.
-                dispatchKeyboardEvent( kVolumeMute, muteIsPressed, now );
-        }
-        
-        if( soundUpIsPressed != _soundUpIsPressed )
-        {
-                // Sound up state has changed.
-                dispatchKeyboardEvent( kVolumeUp, soundUpIsPressed, now );
-        }
-        
-        if( soundDownIsPressed != _soundDownIsPressed )
-        {
-                // Sound down state has changed.
-                dispatchKeyboardEvent( kVolumeDown, soundDownIsPressed, now );
+            case kHIDUsage_Csmr_Power:
+            case kHIDUsage_Csmr_Reset:
+            case kHIDUsage_Csmr_Sleep:
+                keyCode = NX_POWER_KEY;
+                break;
+            case kHIDUsage_Csmr_Play:
+            case kHIDUsage_Csmr_PlayOrPause:
+            case kHIDUsage_Csmr_PlayOrSkip:
+                keyCode = NX_KEYTYPE_PLAY;
+                break;
+            case kHIDUsage_Csmr_ScanNextTrack:
+                keyCode = NX_KEYTYPE_NEXT;
+                break;
+            case kHIDUsage_Csmr_ScanPreviousTrack:
+                keyCode = NX_KEYTYPE_PREVIOUS;
+                break;
+            case kHIDUsage_Csmr_FastForward:
+                keyCode = NX_KEYTYPE_FAST;
+                break;
+            case kHIDUsage_Csmr_Rewind:
+                keyCode = NX_KEYTYPE_REWIND;
+                break;
+            case kHIDUsage_Csmr_StopOrEject:
+            case kHIDUsage_Csmr_Eject:
+                keyCode = NX_KEYTYPE_EJECT;
+                break;
+            case kHIDUsage_Csmr_VolumeIncrement:
+                keyCode = NX_KEYTYPE_SOUND_UP;
+                break;
+            case kHIDUsage_Csmr_VolumeDecrement:
+                keyCode = NX_KEYTYPE_SOUND_DOWN;
+                break;
+            case kHIDUsage_Csmr_Mute:
+                keyCode = NX_KEYTYPE_MUTE;
+                break;
+            default:
+                break;
         }
     }
-    
-    if ( ejectIsPressed != _ejectIsPressed )
+    else if (usagePage == kHIDPage_GenericDesktop)
     {
-            // Eject state has changed.
-            dispatchKeyboardEvent( kEject, ejectIsPressed, now );
+        switch (usage)
+        {
+            case kHIDUsage_GD_SystemPowerDown:
+            case kHIDUsage_GD_SystemSleep:
+            case kHIDUsage_GD_SystemWakeUp:
+                keyCode = NX_POWER_KEY;
+                break;
+        }
+    }	
+    else if (usagePage == kHIDPage_AppleVendor)
+    {
+        switch (usage)
+        {
+            case kHIDUsage_AppleVendor_BrightnessUp:
+                keyCode = NX_KEYTYPE_BRIGHTNESS_UP;
+                break;    
+            case kHIDUsage_AppleVendor_BrightnessDown:
+                keyCode = NX_KEYTYPE_BRIGHTNESS_DOWN;
+                break;    
+            case kHIDUsage_AppleVendor_VideoMirror:
+                keyCode = NX_KEYTYPE_VIDMIRROR;
+                break;    
+            case kHIDUsage_AppleVendor_IlluminationDown:
+                keyCode = NX_KEYTYPE_ILLUMINATION_DOWN;
+                break;    
+            case kHIDUsage_AppleVendor_IlluminationUp:
+                keyCode = NX_KEYTYPE_ILLUMINATION_UP;
+                break;    
+            case kHIDUsage_AppleVendor_IlluminationToggle:
+                keyCode = NX_KEYTYPE_ILLUMINATION_TOGGLE;
+                break; 
+        }
     }
-        
-    if ( powerIsPressed != _powerIsPressed )
+    else if ((usagePage == kHIDPage_KeyboardOrKeypad) &&
+                (usage == kHIDUsage_KeyboardLockingNumLock))
     {
-            // Power state has changed.
-            dispatchKeyboardEvent( kPower, powerIsPressed, now );
-    }
-     
-    if ( playIsPressed != _playIsPressed )
-    {
-            // Play state has changed.
-            dispatchKeyboardEvent( kPlay, playIsPressed, now );
+        keyCode = NX_KEYTYPE_NUM_LOCK;
     }
 
-    if( fastForwardIsPressed != _fastForwardIsPressed )
+
+    if (keyCode == -1)
+        return;
+        
+	if (repeat != _repeat)
+	{
+		_repeat = repeat;
+		setRepeatMode(_repeat);
+	}
+    
+    //Copy the device flags (modifier flags) from the ADB keyboard driver
+    if ( _keyboardNub = sendingkeyboardNub )
     {
-            // Sound up state has changed.
-            dispatchKeyboardEvent( kFastForward, soundUpIsPressed, now );
+        UInt32  currentFlags;
+        
+        currentFlags        = deviceFlags() & ~_cachedEventFlags;
+        _cachedEventFlags   = _keyboardNub->deviceFlags();
+        currentFlags       |= _cachedEventFlags;
+                    
+        setDeviceFlags(currentFlags);
     }
-    if( rewindIsPressed != _rewindIsPressed )
+    else 
     {
-            // Sound down state has changed.
-            dispatchKeyboardEvent( kRewind, soundDownIsPressed, now );
-    }
-    if( nextTrackIsPressed != _nextTrackIsPressed )
-    {
-            // Sound up state has changed.
-            dispatchKeyboardEvent( kNextTrack, soundUpIsPressed, now );
+        findKeyboardsAndGetModifiers();
     }
     
-    if( prevTrackIsPressed != _prevTrackIsPressed )
-    {
-            // Sound down state has changed.
-            dispatchKeyboardEvent( kPreviousTrack, soundDownIsPressed, now );
-    }
-    
-    // Save states for our next report.
-    _soundUpIsPressed		= soundUpIsPressed;
-    _soundDownIsPressed		= soundDownIsPressed;
-    _muteIsPressed 		= muteIsPressed;
-    _ejectIsPressed		= ejectIsPressed;
-    _powerIsPressed		= powerIsPressed;
-    _playIsPressed		= playIsPressed;
-    _fastForwardIsPressed 	= fastForwardIsPressed;
-    _rewindIsPressed		= rewindIsPressed;
-    _nextTrackIsPressed		= nextTrackIsPressed;
-    _prevTrackIsPressed		= prevTrackIsPressed;
+    dispatchKeyboardEvent( keyCode, value, timeStamp );
 }
 
 //====================================================================================================
@@ -427,19 +225,99 @@ void IOHIDConsumer::handleReport()
 //====================================================================================================
 unsigned IOHIDConsumer::eventFlags()
 {
-    return( _eventFlags );
+    unsigned flags = 0;
+        
+    flags = (_keyboardNub) ? _keyboardNub->eventFlags() : _otherEventFlags;
+    
+    return( flags );
 }
+
+//====================================================================================================
+// deviceFlags - IOHIKeyboard override. This is necessary because we will need to return the state
+// of the modifier keys on attached keyboards. If we don't, then we the HIDSystem gets
+// the event, it will look like all modifiers are off.
+//====================================================================================================
+unsigned IOHIDConsumer::deviceFlags()
+{
+    unsigned flags = 0;
+        
+    flags = (_keyboardNub) ? _keyboardNub->deviceFlags() : _otherEventFlags;
+    
+    return( flags );
+}
+
+//====================================================================================================
+// setDeviceFlags - IOHIKeyboard override. This is necessary because we will need to return the state
+// of the modifier keys on attached keyboards. If we don't, then we the HIDSystem gets
+// the event, it will look like all modifiers are off.
+//====================================================================================================
+void IOHIDConsumer::setDeviceFlags(unsigned flags)
+{
+    if ( _keyboardNub )
+        _keyboardNub->setDeviceFlags(flags);
+        
+    super::setDeviceFlags(flags);
+}
+
 
 //====================================================================================================
 // alphaLock  - IOHIKeyboard override. This is necessary because we will need to return the state
 // of the caps lock keys on attached keyboards. If we don't, then we the HIDSystem gets
 // the event, it will look like caps lock keys are off.
 //====================================================================================================
-
 bool IOHIDConsumer::alphaLock()
 {
-    return( _capsLockOn );
+    bool state = false;
+        
+    state = (_keyboardNub) ? _keyboardNub->alphaLock() : _otherCapsLockOn;
+    
+    return( state );
 }
+
+//====================================================================================================
+// setNumLock  - IOHIKeyboard override. This is necessary because we will need to toggle the num lock
+// led on the keyboard interface
+//====================================================================================================
+void IOHIDConsumer::setNumLock(bool val)
+{    
+    if (_keyboardNub) _keyboardNub->setNumLock(val);    
+}
+
+//====================================================================================================
+// numLock  - IOHIKeyboard override. This is necessary because we will need to check the num lock
+// status on the keyboard interface
+//====================================================================================================
+bool IOHIDConsumer::numLock()
+{
+    bool state = false;
+        
+    state = (_keyboardNub) ? _keyboardNub->numLock() : super::numLock();
+    
+    return( state );
+}
+
+//====================================================================================================
+// doesKeyLock  - IOHIKeyboard override. This is necessary because the system will only toggle the led
+// and set appropriate event flags if the num lock key physically locks.
+//====================================================================================================
+bool IOHIDConsumer:: doesKeyLock ( unsigned key)
+{
+    if ( key == NX_KEYTYPE_NUM_LOCK )
+        return true;
+    
+    return false;
+}
+
+UInt32 IOHIDConsumer::deviceType()
+{
+    UInt32 type = 0;
+        
+    type = (_keyboardNub) ? _keyboardNub->deviceType() : super::deviceType();
+    
+    return( type );
+}
+
+
 
 //====================================================================================================
 // defaultKeymapOfLength - IOHIKeyboard override
@@ -470,20 +348,36 @@ const unsigned char * IOHIDConsumer::defaultKeymapOfLength( UInt32 * length )
         
         // The next value is the number of special keys. We use these.
         
-        0x0a,
+        NX_NUMSPECIALKEYS,
         
         // Special Key	  	SCANCODE
-        //-----------------------------------------------------------
-        NX_POWER_KEY,		kPower,
-        NX_KEYTYPE_SOUND_UP, 	kVolumeUp,
-        NX_KEYTYPE_SOUND_DOWN, 	kVolumeDown,
-        NX_KEYTYPE_MUTE, 	kVolumeMute,
-        NX_KEYTYPE_PLAY,	kPlay,
-	NX_KEYTYPE_NEXT,	kNextTrack,
-	NX_KEYTYPE_PREVIOUS,	kPreviousTrack,
-	NX_KEYTYPE_FAST,	kFastForward,
-	NX_KEYTYPE_REWIND, 	kRewind,
-        NX_KEYTYPE_EJECT, 	kEject
+        //-----------------------------------------------------------        
+                
+        NX_KEYTYPE_SOUND_UP,		NX_KEYTYPE_SOUND_UP,
+        NX_KEYTYPE_SOUND_DOWN,		NX_KEYTYPE_SOUND_DOWN,
+        NX_KEYTYPE_BRIGHTNESS_UP,	NX_KEYTYPE_BRIGHTNESS_UP,
+        NX_KEYTYPE_BRIGHTNESS_DOWN,	NX_KEYTYPE_BRIGHTNESS_DOWN,
+        NX_KEYTYPE_CAPS_LOCK,		NX_KEYTYPE_CAPS_LOCK,
+        NX_KEYTYPE_HELP,		NX_KEYTYPE_HELP,
+        NX_POWER_KEY,			NX_POWER_KEY,
+        NX_KEYTYPE_MUTE,		NX_KEYTYPE_MUTE,
+        NX_UP_ARROW_KEY,		NX_UP_ARROW_KEY,
+        NX_DOWN_ARROW_KEY,		NX_DOWN_ARROW_KEY,
+        NX_KEYTYPE_NUM_LOCK,		NX_KEYTYPE_NUM_LOCK,
+        NX_KEYTYPE_CONTRAST_UP,		NX_KEYTYPE_CONTRAST_UP,
+        NX_KEYTYPE_CONTRAST_DOWN,	NX_KEYTYPE_CONTRAST_DOWN,
+        NX_KEYTYPE_LAUNCH_PANEL,	NX_KEYTYPE_LAUNCH_PANEL,
+        NX_KEYTYPE_EJECT,		NX_KEYTYPE_EJECT,
+        NX_KEYTYPE_VIDMIRROR,		NX_KEYTYPE_VIDMIRROR,
+        NX_KEYTYPE_PLAY,		NX_KEYTYPE_PLAY,
+        NX_KEYTYPE_NEXT,		NX_KEYTYPE_NEXT,
+        NX_KEYTYPE_PREVIOUS,		NX_KEYTYPE_PREVIOUS,
+        NX_KEYTYPE_FAST,		NX_KEYTYPE_FAST,
+        NX_KEYTYPE_REWIND,		NX_KEYTYPE_REWIND,
+        NX_KEYTYPE_ILLUMINATION_UP,	NX_KEYTYPE_ILLUMINATION_UP,
+        NX_KEYTYPE_ILLUMINATION_DOWN,	NX_KEYTYPE_ILLUMINATION_DOWN,
+        NX_KEYTYPE_ILLUMINATION_TOGGLE,	NX_KEYTYPE_ILLUMINATION_TOGGLE
+
     };
     
  
@@ -493,16 +387,17 @@ const unsigned char * IOHIDConsumer::defaultKeymapOfLength( UInt32 * length )
 }
 
 //====================================================================================================
-// FindKeyboardsAndGetModifiers
+// findKeyboardsAndGetModifiers
 //====================================================================================================
-UInt32 IOHIDConsumer::FindKeyboardsAndGetModifiers()
+UInt32 IOHIDConsumer::findKeyboardsAndGetModifiers()
 {
 	OSIterator	*iterator = NULL;
 	OSDictionary	*matchingDictionary = NULL;
 	IOHIKeyboard	*device = NULL;	
 	
-	_eventFlags = 0;
-	_capsLockOn = FALSE;
+	_otherEventFlags = 0;
+    _cachedEventFlags = 0;
+	_otherCapsLockOn = FALSE;
 	
 	// Get matching dictionary.
 	
@@ -534,14 +429,14 @@ UInt32 IOHIDConsumer::FindKeyboardsAndGetModifiers()
 		//
 		if( device->alphaLock() )
 		{
-			_capsLockOn = TRUE;
+			_otherCapsLockOn = TRUE;
 		}
 
 		// OR in the flags, so we get a combined IOHIKeyboard device flags state. That
 		// way, if the user is pressing command on one keyboard, shift on another, and
 		// then hits an eject key, we'll get both modifiers.
 		//
-		_eventFlags |= device->eventFlags();
+		_otherEventFlags |= device->eventFlags();
 	}
 	
 exit:
@@ -549,5 +444,6 @@ exit:
 	if( matchingDictionary ) matchingDictionary->release();
 	if( iterator ) iterator->release();
 	
-	return( _eventFlags );
+	return( _otherEventFlags );
 }
+

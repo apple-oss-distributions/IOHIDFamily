@@ -34,7 +34,6 @@ public:
     
 protected:
     virtual void		mergeProperties(OSObject* dest, OSObject* src) ;
-    virtual OSDictionary *	copyDictionaryProperty(OSDictionary*	srcDictionary) ;
 };
 
 #define super IOService
@@ -42,42 +41,56 @@ OSDefineMetaClassAndStructors(IOHIDLibUserClientIniter, IOService);
 
 bool IOHIDLibUserClientIniter::start(IOService * provider)
 {
-    OSObject *		dictObj = getProperty("IOProviderMergeProperties");
+    OSDictionary *	dictObj = OSDynamicCast(OSDictionary, getProperty("IOProviderMergeProperties"));
     OSDictionary *	providerMergeProperties = NULL;
 
     if (!super::start(provider))
         return false;
 
     
-    providerMergeProperties = OSDynamicCast(OSDictionary, dictObj);
+    providerMergeProperties = (dictObj) ? (OSDictionary *)dictObj->copyCollection() : NULL;
     
     if ( !providerMergeProperties )
     {
         return false;
     }
 
-    const OSSymbol *	userClientClass;
+    const OSSymbol *	userClientClass = NULL;
     OSObject * 		temp = providerMergeProperties->getObject( gIOUserClientClassKey ) ;
 
     
-    if ( OSDynamicCast(OSSymbol, temp) )
-        userClientClass = NULL;			// already in correct form, so don't need to re-add
+    if ( userClientClass = OSDynamicCast(OSSymbol, temp) )
+    {}
     else if ( OSDynamicCast(OSString, temp) )
+    {
         userClientClass = OSSymbol::withString((const OSString *) temp);	// convert to OSSymbol
+        providerMergeProperties->setObject(gIOUserClientClassKey, (OSObject *) userClientClass);
+        userClientClass->release();
+    }
     else
     {
-	userClientClass = NULL;			// unknown form for key
 	providerMergeProperties->removeObject(gIOUserClientClassKey);
     }
 
     if (userClientClass)
-	providerMergeProperties->setObject(gIOUserClientClassKey, (OSObject *) userClientClass);
+    {
+        provider->setProperty(gIOUserClientClassKey, (OSObject *)userClientClass);
+    }
 
-    OSDictionary*	providerProps = provider->getPropertyTable();
+    OSDictionary * providerProps = NULL;
+
+    dictObj = provider->getPropertyTable();    
+    providerProps = (dictObj) ? (OSDictionary *)dictObj->copyCollection() : NULL;
+    
     if (providerProps)
     {
         mergeProperties(providerProps, providerMergeProperties) ;
+        provider->setPropertyTable(providerProps);
+        providerProps->release();
     }
+        
+    setProperty("IOProviderMergeProperties", providerMergeProperties);
+    providerMergeProperties->release();
 
     return true ;
 
@@ -94,54 +107,21 @@ IOHIDLibUserClientIniter::mergeProperties(OSObject* inDest, OSObject* inSrc)
 
     OSCollectionIterator*	srcIterator = OSCollectionIterator::withCollection(src) ;
     
-    OSSymbol*	keyObject	= NULL ;
-    OSObject*	destObject	= NULL ;
-    OSObject*	srcObject	= NULL ;
+    OSSymbol*       keyObject	= NULL ;
+    OSObject*       destObject	= NULL ;
+    OSObject*       srcObject	= NULL ;
     while (NULL != (keyObject = OSDynamicCast(OSSymbol, srcIterator->getNextObject())))
     {
-            srcObject 	= src->getObject(keyObject) ;
-            destObject	= dest->getObject(keyObject) ;
-            
-            if (OSDynamicCast(OSDictionary, srcObject))
-                    srcObject = copyDictionaryProperty((OSDictionary*)srcObject) ;
+        srcObject 	= src->getObject(keyObject) ;
+        destObject	= dest->getObject(keyObject) ;
                     
-            if (destObject && OSDynamicCast(OSDictionary, srcObject))
-                    mergeProperties(destObject, srcObject );
-            else
-                    dest->setObject(keyObject, srcObject) ;
-
+        if (destObject && OSDynamicCast(OSDictionary, srcObject))
+            mergeProperties(destObject, srcObject );
+        else if ( !destObject )
+            dest->setObject(keyObject, srcObject) ;
+            
     }
     
     // have to release this, or we'll leak.
     srcIterator->release() ;
-}
-
-OSDictionary *
-IOHIDLibUserClientIniter::copyDictionaryProperty( OSDictionary *	srcDictionary)
-{
-    OSDictionary*		result			= NULL ;
-    OSObject*			srcObject		= NULL ;
-    OSCollectionIterator*	srcIterator		= NULL ;
-    OSSymbol*			keyObject		= NULL ;
-    
-    result = OSDictionary::withCapacity(srcDictionary->getCount()) ;
-    if (result)
-    {
-        srcIterator = OSCollectionIterator::withCollection(srcDictionary) ;
-        if (srcIterator)
-        {
-            while ( keyObject = OSDynamicCast(OSSymbol, srcIterator->getNextObject()) )
-            {
-                srcObject = srcDictionary->getObject(keyObject) ;
-                if (OSDynamicCast(OSDictionary, srcObject))
-                        srcObject = copyDictionaryProperty((OSDictionary*)srcObject) ;
-                            
-                result->setObject(keyObject, srcObject) ;
-            }
-            
-        srcIterator->release() ;
-        }
-    }
-    
-    return result ;
 }

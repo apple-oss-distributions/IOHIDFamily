@@ -80,14 +80,14 @@ sMethods[kIOHIDLibUserClientNumCommands] = {
 	(IOMethod) &IOHIDLibUserClient::addElementToQueue,
 	kIOUCScalarIScalarO,
 	3,
-	0
+	1
     },
     { //    kIOHIDLibUserClientRemoveElementFromQueue
 	0,
 	(IOMethod) &IOHIDLibUserClient::removeElementFromQueue,
 	kIOUCScalarIScalarO,
 	2,
-	0
+	1
     },
     { //    kIOHIDLibUserClientQueueHasElement
 	0,
@@ -199,6 +199,10 @@ initWithTask(task_t owningTask, void * /* security_id */, UInt32 /* type */)
     fCachedOptionBits = 0;
     
     task_reference (fClient);
+
+    fQueueSet = OSSet::withCapacity(4);
+    if (!fQueueSet)
+        return false;
     
     return true;
 }
@@ -211,6 +215,20 @@ IOReturn IOHIDLibUserClient::clientClose(void)
     }
    
    if (fNub) {	
+   
+        // First clear any remaining queues
+        OSCollectionIterator * iterator = OSCollectionIterator::withCollection(fQueueSet);
+        
+        if (iterator)
+        {
+            IOHIDEventQueue * queue;
+            while (queue = (IOHIDEventQueue *)iterator->getNextObject())
+            {
+                fNub->stopEventDelivery(queue);
+            }
+            iterator->release();
+        }
+        
         // Have been started so we better detach
 		
         // make sure device is closed (especially on crash)
@@ -318,20 +336,15 @@ open(void * flags, void *, void *, void *, void *, void *)
     IOReturn 		ret = kIOReturnSuccess;
     IOOptionBits 	options = (IOOptionBits)flags;
     
-    if (options & kIOServiceSeize)
-        do {
-            ret = clientHasPrivilege(fClient, kIOClientPrivilegeAdministrator);
-            if (ret == kIOReturnSuccess)
-                break;
-                
-            ret = clientHasPrivilege(fClient, kIOClientPrivilegeLocalUser);
-            if (ret == kIOReturnSuccess)
-                break;
-                
+    ret = clientHasPrivilege(fClient, kIOClientPrivilegeLocalUser);
+    if (ret != kIOReturnSuccess)
+    {
+        ret = clientHasPrivilege(fClient, kIOClientPrivilegeAdministrator);
+        if (ret != kIOReturnSuccess)
             return ret;
-        } while (0);
+    }
     
-    if (!fNub->open(this, options))
+    if (!fNub->IOService::open(this, options))
 	return kIOReturnExclusiveAccess;
         
     fCachedOptionBits = options;
@@ -389,6 +402,12 @@ void IOHIDLibUserClient::free()
         fGate = 0;
     }
     
+    if (fQueueSet)
+    {
+        fQueueSet->release();
+        fQueueSet = 0;
+    }
+    
     if (fNub)
     {
         fNub->release();
@@ -411,8 +430,9 @@ clientMemoryForType (	UInt32			type,
                         IOOptionBits *		options,
                         IOMemoryDescriptor ** 	memory )
 {
-    IOReturn             ret = kIOReturnNoMemory;
-    IOMemoryDescriptor * memoryToShare = NULL;
+    IOReturn                ret             = kIOReturnNoMemory;
+    IOMemoryDescriptor *    memoryToShare   = NULL;
+    IOHIDEventQueue *       queue           = NULL;
     
     // if the type is element values, then get that
     if (type == IOHIDLibUserClientElementValuesType)
@@ -422,12 +442,9 @@ clientMemoryForType (	UInt32			type,
             memoryToShare = fNub->getMemoryWithCurrentElementValues();
     }
     // otherwise, the type is an object pointer (evil hack alert - see header)
-    else
+    // evil hack, the type is an IOHIDEventQueue ptr (as returned by createQueue)
+    else if (queue = OSDynamicCast(IOHIDEventQueue, (OSObject *)type))
     {
-        // evil hack, the type is an IOHIDEventQueue ptr (as returned by createQueue)
-        IOHIDEventQueue * queue = (IOHIDEventQueue *) type;
-        
-        // get queue memory
         memoryToShare = queue->getMemoryDescriptor();
     }
     
@@ -457,11 +474,15 @@ createQueue(void * vInFlags, void * vInDepth, void * vOutQueue, void *, void *, 
     void **	outQueue = (void **) vOutQueue;
 
     // create the queue (fudge it a bit bigger than requested)
-    IOHIDEventQueue * eventQueue = IOHIDEventQueue::withEntries (depth+1, 
-                            sizeof(IOHIDElementValue) + sizeof(void *));
+    IOHIDEventQueue * eventQueue = IOHIDEventQueue::withEntries (depth+1, DEFAULT_HID_ENTRY_SIZE);
     
     // set out queue
     *outQueue = eventQueue;
+            
+    // add the queue to the set
+    fQueueSet->setObject(eventQueue);
+    
+    eventQueue->release();
     
     return kIOReturnSuccess;
 }
@@ -478,8 +499,8 @@ disposeQueue(void * vInQueue, void *, void *, void *, void *, void * gated)
     if (fNub && !isInactive() && !fNubIsTerminated)
         ret = fNub->stopEventDelivery (queue);
     
-    // release this queue
-    queue->release();
+    // remove the queue from the set
+    fQueueSet->removeObject(queue);
 
     return kIOReturnSuccess;
 }
@@ -487,35 +508,47 @@ disposeQueue(void * vInQueue, void *, void *, void *, void *, void * gated)
     // Add an element to a queue
 IOReturn IOHIDLibUserClient::
 addElementToQueue(void * vInQueue, void * vInElementCookie, 
-                            void * vInFlags, void *, void *, void * gated)
+                            void * vInFlags, void *vSizeChange, void *, void * gated)
 {
-    IOReturn ret = kIOReturnSuccess;
+    IOReturn    ret     = kIOReturnSuccess;
+    UInt32      size    = 0;
+    Boolean *   sizeChange = (Boolean *) vSizeChange;
 
     // parameter typing
     IOHIDEventQueue * queue = (IOHIDEventQueue *) vInQueue;
     IOHIDElementCookie elementCookie = (IOHIDElementCookie) vInElementCookie;
     // UInt32 flags = (UInt32) vInFlags;
     
+    size = (queue) ? queue->getEntrySize() : 0;
+    
     // add the queue to the element's queues
     if (fNub && !isInactive() && !fNubIsTerminated)
         ret = fNub->startEventDelivery (queue, elementCookie);
+        
+    *sizeChange = (queue && (size != queue->getEntrySize())) ? true : false;
     
     return ret;
 }   
     // remove an element from a queue
 IOReturn IOHIDLibUserClient::
 removeElementFromQueue (void * vInQueue, void * vInElementCookie, 
-                            void *, void *, void *, void * gated)
+                            void * vSizeChange, void *, void *, void * gated)
 {
-    IOReturn ret = kIOReturnSuccess;
+    IOReturn    ret     = kIOReturnSuccess;
+    UInt32      size    = 0;
+    Boolean *   sizeChange = (Boolean *) vSizeChange;
 
     // parameter typing
     IOHIDEventQueue * queue = (IOHIDEventQueue *) vInQueue;
     IOHIDElementCookie elementCookie = (IOHIDElementCookie) vInElementCookie;
 
+    size = (queue) ? queue->getEntrySize() : 0;
+
     // remove the queue from the element's queues
     if (fNub && !isInactive() && !fNubIsTerminated)
         ret = fNub->stopEventDelivery (queue, elementCookie);
+
+    *sizeChange = (queue && (size != queue->getEntrySize())) ? true : false;
     
     return ret;
 }    
@@ -637,7 +670,7 @@ getReportOOL(  IOHIDReportReq *reqIn,
     if (fNub && !isInactive() && !fNubIsTerminated)
     {
         *sizeOut = 0;
-        mem = IOMemoryDescriptor::withAddress(reqIn->reportBuffer, reqIn->reportBufferSize, kIODirectionIn, fClient);
+        mem = IOMemoryDescriptor::withAddress((vm_address_t)reqIn->reportBuffer, reqIn->reportBufferSize, kIODirectionIn, fClient);
         if(mem)
         { 
             ret = mem->prepare();
@@ -698,7 +731,7 @@ setReportOOL (IOHIDReportReq *req, IOByteCount inCount)
 
     if (fNub && !isInactive() && !fNubIsTerminated)
     {
-        mem = IOMemoryDescriptor::withAddress(req->reportBuffer, req->reportBufferSize, kIODirectionOut, fClient);
+        mem = IOMemoryDescriptor::withAddress((vm_address_t)req->reportBuffer, req->reportBufferSize, kIODirectionOut, fClient);
         if(mem) 
         {
             ret = mem->prepare();

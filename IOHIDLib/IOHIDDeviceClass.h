@@ -32,24 +32,29 @@
 
 class IOHIDQueueClass;
 
+
 struct IOHIDElementStruct
 {
     unsigned long	cookie;
-    long		type;
-    long		min;
-    long		max;
-    long		usage;
-    long		usagePage;
-    long		bytes;
+    long            type;
+    long            min;
+    long            max;
+    long            usage;
+    long            usagePage;
+    long            bytes;
     unsigned long	valueLocation;
     CFDictionaryRef	elementDictionaryRef;
-    CFDictionaryRef	parentElementDictionaryRef;
 };
 typedef struct IOHIDElementStruct IOHIDElementStruct;
 
 
 class IOHIDDeviceClass : public IOHIDIUnknown
 {
+typedef struct MyPrivateData {
+    io_object_t				notification;
+    IOHIDDeviceClass *		self;
+} MyPrivateData;
+
 private:
     // friends with queue class
     friend class IOHIDQueueClass;
@@ -69,22 +74,27 @@ protected:
     struct InterfaceMap 	fHIDDevice;
     io_service_t 		fService;
     io_connect_t 		fConnection;
-    mach_port_t 		fAsyncPort;
+    IONotificationPortRef 		fAsyncPort;
     CFRunLoopRef 		fRunLoop;
     IONotificationPortRef 	fNotifyPort;
     CFRunLoopSourceRef 		fCFSource;
+	CFRunLoopSourceRef		fNotifyCFSource;
     bool 			fIsOpen;
     bool 			fIsLUNZero;
     bool			fIsTerminated;
     bool			fIsSeized;
+    bool            fAsyncPortSetupDone;
     UInt32			fCachedFlags;
+	
+	MyPrivateData * fAsyncPrivateDataRef;
+	MyPrivateData * fNotifyPrivateDataRef;
     
     IOHIDCallbackFunction 	fRemovalCallback;
     void *			fRemovalTarget;
     void *			fRemovalRefcon;
     
     CFMutableSetRef		fQueues;
-    CFDictionaryRef		fDeviceProperties;
+    CFMutableArrayRef	fDeviceElements;
     
     // ptr to shared memory for current values of elements
     vm_address_t 	fCurrentValuesMappedMemory;
@@ -98,7 +108,7 @@ protected:
     long 				fReportHandlerElementCount;
     IOHIDElementStruct * 		fReportHandlerElements;
     
-    IOHIDQueueInterface **		fReportHandlerQueue;
+    IOHIDQueueClass *		fReportHandlerQueue;
     
     IOHIDReportCallbackFunction		fInputReportCallback;
     void *				fInputReportTarget;
@@ -122,7 +132,14 @@ protected:
                         UInt8 *        dst,
                         UInt32         bitsToCopy);
                         
+	IOReturn finishAsyncPortSetup();
+	IOReturn finishReportHandlerQueueSetup();
+	
+	IOHIDQueueClass * createQueue(bool reportHandler=false);
+
     // Call back methods
+    static void _cfmachPortCallback(CFMachPortRef cfPort, mach_msg_header_t *msg, CFIndex size, void *info);
+
     static void _hidReportCallback(void *refcon, IOReturn result, UInt32 bufferSize);
     
     static void _deviceNotification( void *refCon,
@@ -134,7 +151,7 @@ protected:
                            
 public:
     // add/remove a queue 
-    HRESULT attachQueue (IOHIDQueueClass * iohidQueue);
+    HRESULT attachQueue (IOHIDQueueClass * iohidQueue, bool reportHandler = false);
     HRESULT detachQueue (IOHIDQueueClass * iohidQueue);
     
     // add/remove a queue 
@@ -146,6 +163,7 @@ public:
     bool getElement(IOHIDElementCookie elementCookie, IOHIDElementStruct *element);
     IOHIDElementType getElementType (IOHIDElementCookie elementCookie);
     UInt32 getElementByteSize (IOHIDElementCookie elementCookie);
+
 
     // IOCFPlugin stuff
     static IOCFPlugInInterface **alloc();
@@ -360,9 +378,10 @@ protected:
     static void		StaticCountElements (const void * value, void * parameter);
     static void		StaticCreateLeafElements (const void * value, void * parameter);
 
-    kern_return_t	BuildElements (CFDictionaryRef properties);
+    kern_return_t	BuildElements (CFDictionaryRef properties, CFMutableArrayRef set);
     long		CountElements (CFDictionaryRef properties, CFTypeRef element, CFStringRef key);
-    kern_return_t	CreateLeafElements (CFDictionaryRef properties, 
+    kern_return_t	CreateLeafElements (CFDictionaryRef properties,
+                                            CFMutableArrayRef array,
                                             CFTypeRef element, 
                                             long * allocatedElementCount,
                                             CFStringRef key,

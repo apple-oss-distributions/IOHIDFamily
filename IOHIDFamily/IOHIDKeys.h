@@ -38,8 +38,8 @@ __BEGIN_DECLS
 
 /*!
     @defined HID Device Property Keys
-    @abstract Keys that represent properties of a paticular element.
-    @discussion Keys that represent properties of a paticular element.  Can be added
+    @abstract Keys that represent properties of a paticular device.
+    @discussion Keys that represent properties of a paticular device.  Can be added
         to your matching dictionary when refining searches for HID devices.
         <br><br>
         <b>Please note:</b><br>
@@ -76,6 +76,7 @@ __BEGIN_DECLS
 #define kIOHIDManufacturerKey               "Manufacturer"
 #define kIOHIDProductKey                    "Product"
 #define kIOHIDSerialNumberKey               "SerialNumber"
+#define kIOHIDCountryCodeKey                "CountryCode"
 #define kIOHIDLocationIDKey                 "LocationID"
 #define kIOHIDDeviceUsageKey                "DeviceUsage"
 #define kIOHIDDeviceUsagePageKey            "DeviceUsagePage"
@@ -112,6 +113,7 @@ __BEGIN_DECLS
 #define kIOHIDElementSizeKey                "Size"
 #define kIOHIDElementReportSizeKey          "ReportSize"
 #define kIOHIDElementReportCountKey         "ReportCount"
+#define kIOHIDElementReportIDKey            "ReportID"
 #define kIOHIDElementIsArrayKey             "IsArray"
 #define kIOHIDElementIsRelativeKey          "IsRelative"
 #define kIOHIDElementIsWrappingKey          "IsWrapping"
@@ -124,6 +126,7 @@ __BEGIN_DECLS
 #define kIOHIDElementNameKey                "Name"
 #define kIOHIDElementValueLocationKey       "ValueLocation"
 #define kIOHIDElementDuplicateIndexKey      "DuplicateIndex"
+#define kIOHIDElementParentCollectionKey    "ParentCollection"
 
 /*!
     @typedef IOHIDElementCookie
@@ -231,6 +234,20 @@ enum IOHIDOptionsType
     kIOHIDOptionsTypeSeizeDevice = 0x01
 };
 typedef enum IOHIDOptionsType IOHIDOptionsType;
+
+enum IOHIDElementFlags
+{
+    kIOHIDElementFlagsConstantMask        = 0x0001,
+    kIOHIDElementFlagsVariableMask        = 0x0002,
+    kIOHIDElementFlagsRelativeMask        = 0x0004,
+    kIOHIDElementFlagsWrapMask            = 0x0008,
+    kIOHIDElementFlagsNonLinearMask       = 0x0010,
+    kIOHIDElementFlagsNoPreferredMask     = 0x0020,
+    kIOHIDElementFlagsNullStateMask       = 0x0040,
+    kIOHIDElementFlagsVolativeMask        = 0x0080,
+    kIOHIDElementFlagsBufferedByteMask    = 0x0100
+};
+
 
 __END_DECLS
 

@@ -24,10 +24,10 @@
 
 #include <IOKit/IORegistryEntry.h>
 #include <IOKit/IOLib.h>
-#include "IOHIDElement.h"
-#include "IOHIDDevice.h"
+#include "IOHIDElementPrivate.h"
 #include "IOHIDEventQueue.h"
 #include "IOHIDParserPriv.h"
+#include "IOHIDPrivateKeys.h"
 
 #define IsRange() \
             (_usageMin != _usageMax)
@@ -50,19 +50,56 @@
 #define IsDuplicateReportHandler(reportHandler) \
             (reportHandler == _duplicateReportHandler)
             
+#define GetDuplicateElementCount(element) \
+            ((element->_duplicateReportHandler) ? element->_duplicateReportHandler->_reportCount : 0)
+            
 #define GetArrayItemIndex(sel) \
             (sel - _logicalMin)
 
 #define GetArrayItemSel(index) \
             (index + _logicalMin)
-
-#define super OSObject
-OSDefineMetaClassAndStructors( IOHIDElement, OSObject )
+			
+OSDefineMetaClassAndAbstractStructors(IOHIDElement, OSObject)
+OSMetaClassDefineReservedUnused(IOHIDElement,  0);
+OSMetaClassDefineReservedUnused(IOHIDElement,  1);
+OSMetaClassDefineReservedUnused(IOHIDElement,  2);
+OSMetaClassDefineReservedUnused(IOHIDElement,  3);
+OSMetaClassDefineReservedUnused(IOHIDElement,  4);
+OSMetaClassDefineReservedUnused(IOHIDElement,  5);
+OSMetaClassDefineReservedUnused(IOHIDElement,  6);
+OSMetaClassDefineReservedUnused(IOHIDElement,  7);
+OSMetaClassDefineReservedUnused(IOHIDElement,  8);
+OSMetaClassDefineReservedUnused(IOHIDElement,  9);
+OSMetaClassDefineReservedUnused(IOHIDElement, 10);
+OSMetaClassDefineReservedUnused(IOHIDElement, 11);
+OSMetaClassDefineReservedUnused(IOHIDElement, 12);
+OSMetaClassDefineReservedUnused(IOHIDElement, 13);
+OSMetaClassDefineReservedUnused(IOHIDElement, 14);
+OSMetaClassDefineReservedUnused(IOHIDElement, 15);
+OSMetaClassDefineReservedUnused(IOHIDElement, 16);
+OSMetaClassDefineReservedUnused(IOHIDElement, 17);
+OSMetaClassDefineReservedUnused(IOHIDElement, 18);
+OSMetaClassDefineReservedUnused(IOHIDElement, 19);
+OSMetaClassDefineReservedUnused(IOHIDElement, 20);
+OSMetaClassDefineReservedUnused(IOHIDElement, 21);
+OSMetaClassDefineReservedUnused(IOHIDElement, 22);
+OSMetaClassDefineReservedUnused(IOHIDElement, 23);
+OSMetaClassDefineReservedUnused(IOHIDElement, 24);
+OSMetaClassDefineReservedUnused(IOHIDElement, 25);
+OSMetaClassDefineReservedUnused(IOHIDElement, 26);
+OSMetaClassDefineReservedUnused(IOHIDElement, 27);
+OSMetaClassDefineReservedUnused(IOHIDElement, 28);
+OSMetaClassDefineReservedUnused(IOHIDElement, 29);
+OSMetaClassDefineReservedUnused(IOHIDElement, 30);
+OSMetaClassDefineReservedUnused(IOHIDElement, 31);
+	
+#define super IOHIDElement
+OSDefineMetaClassAndStructors( IOHIDElementPrivate, super )
 
 //---------------------------------------------------------------------------
 // 
  
-bool IOHIDElement::init( IOHIDDevice * owner, IOHIDElementType type )
+bool IOHIDElementPrivate::init( IOHIDDevice * owner, IOHIDElementType type )
 {
 	if ( ( super::init() != true ) || ( owner == 0 ) )
     {
@@ -89,13 +126,13 @@ bool IOHIDElement::init( IOHIDDevice * owner, IOHIDElementType type )
 //---------------------------------------------------------------------------
 // 
 
-IOHIDElement *
-IOHIDElement::buttonElement( IOHIDDevice *     owner,
+IOHIDElementPrivate *
+IOHIDElementPrivate::buttonElement( IOHIDDevice *     owner,
                              IOHIDElementType  type,
                              HIDButtonCapabilitiesPtr  button,
-                             IOHIDElement *    parent )
+                             IOHIDElementPrivate *    parent )
 {
-    IOHIDElement * element = new IOHIDElement;
+    IOHIDElementPrivate * element = new IOHIDElementPrivate;
 
     // Check arguments and call init().
 
@@ -120,12 +157,7 @@ IOHIDElement::buttonElement( IOHIDDevice *     owner,
     if ( button->isRange )
     {
         element->_usageMin = button->u.range.usageMin;
-        element->_usageMax = button->u.range.usageMax;
-        
-        if (!IsArrayElement(element))
-        {
-            element->_reportCount = 1;
-        }
+        element->_usageMax = button->u.range.usageMax;        
     }
     else
     {
@@ -149,21 +181,23 @@ IOHIDElement::buttonElement( IOHIDDevice *     owner,
         // support this.
         element->_reportBits	= button->unitExponent;
         element->_reportCount	= button->units;
+        
+        // RY: Let's set the minimum range for keys that this keyboard supports.
+        // This is needed because some keyboard describe support for 101 keys, but
+        // in actuality support a far greater amount of keys.  Ex. JIS keyboard on
+        // Q41B and Q16B.
+        if (button->isRange &&
+            ( element->_usagePage == kHIDPage_KeyboardOrKeypad ) && 
+            ( element->_usageMax < (kHIDUsage_KeyboardLeftControl - 1) ))
+        {
+            element->_usageMax = kHIDUsage_KeyboardLeftControl - 1;
+        }
     }
     else
     {
         element->_reportBits     = 1;
         element->_units          = button->units;
         element->_unitExponent   = button->unitExponent;
-        
-        if (element->_reportCount > 1)
-        {
-            element->_duplicateReportHandler = element;
-            element->_duplicateElements = OSArray::withCapacity(element->_reportCount);        
-            
-            if (element->_duplicateElements == NULL)
-                goto BUTTON_ELEMENT_RELEASE;        
-        }
     }
 
     // Register with owner and parent, then spawn sub-elements.
@@ -175,7 +209,6 @@ IOHIDElement::buttonElement( IOHIDDevice *     owner,
         return element;
     }
 
-BUTTON_ELEMENT_RELEASE:
     element->release();
     element = 0;
 
@@ -185,13 +218,13 @@ BUTTON_ELEMENT_RELEASE:
 //---------------------------------------------------------------------------
 // 
 
-IOHIDElement *
-IOHIDElement::valueElement( IOHIDDevice *     owner,
+IOHIDElementPrivate *
+IOHIDElementPrivate::valueElement( IOHIDDevice *     owner,
                             IOHIDElementType  type,
                             HIDValueCapabilitiesPtr   value,
-                            IOHIDElement *    parent )
+                            IOHIDElementPrivate *    parent )
 {
-    IOHIDElement * element = new IOHIDElement;
+    IOHIDElementPrivate * element = new IOHIDElementPrivate;
 
     // Check arguments and call init().
 
@@ -230,6 +263,8 @@ IOHIDElement::valueElement( IOHIDDevice *     owner,
     {
         element->_usageMin = value->u.notRange.usage;
         element->_usageMax = value->u.notRange.usage;
+		
+		element->setupResolution();
     }
     
     if (element->_reportCount > 1)
@@ -261,13 +296,13 @@ VALUE_ELEMENT_RELEASE:
 //---------------------------------------------------------------------------
 // 
 
-IOHIDElement *
-IOHIDElement::collectionElement( IOHIDDevice *         owner,
+IOHIDElementPrivate *
+IOHIDElementPrivate::collectionElement( IOHIDDevice *         owner,
                                  IOHIDElementType      type,
                                  HIDCollectionExtendedNodePtr  collection,
-                                 IOHIDElement *        parent )
+                                 IOHIDElementPrivate *        parent )
 {
-	IOHIDElement * element = new IOHIDElement;
+	IOHIDElementPrivate * element = new IOHIDElementPrivate;
 
     // Check arguments and call init().
 
@@ -284,7 +319,7 @@ IOHIDElement::collectionElement( IOHIDDevice *         owner,
     element->_usagePage     = collection->collectionUsagePage;
     element->_usageMin      = collection->collectionUsage;
     element->_usageMax      = collection->collectionUsage;
-    element->_collectionType = collection->data;
+    element->_collectionType = (IOHIDElementCollectionType)collection->data;
 
     // Register with owner and parent.
 
@@ -301,13 +336,13 @@ IOHIDElement::collectionElement( IOHIDDevice *         owner,
 //---------------------------------------------------------------------------
 // 
 
-IOHIDElement * IOHIDElement::reportHandlerElement(
+IOHIDElementPrivate * IOHIDElementPrivate::reportHandlerElement(
                                             IOHIDDevice *        owner,
                                             IOHIDElementType     type,
                                             UInt32               reportID,
                                             UInt32               reportBits )
 {
-    IOHIDElement * element = new IOHIDElement;
+    IOHIDElementPrivate * element = new IOHIDElementPrivate;
 
     if ( ( reportBits == 0 ) || ( element->init( owner, type ) == false ) )
     {
@@ -336,9 +371,9 @@ IOHIDElement * IOHIDElement::reportHandlerElement(
 //---------------------------------------------------------------------------
 // 
 
-IOHIDElement * IOHIDElement::newSubElement( UInt16 rangeIndex ) const
+IOHIDElementPrivate * IOHIDElementPrivate::newSubElement( UInt16 rangeIndex ) const
 {
-    IOHIDElement * element = new IOHIDElement;
+    IOHIDElementPrivate * element = new IOHIDElementPrivate;
 
     // Check arguments and call init().
 
@@ -368,6 +403,8 @@ IOHIDElement * IOHIDElement::newSubElement( UInt16 rangeIndex ) const
     element->_units          		= _units;
     element->_unitExponent   		= _unitExponent;
 
+	element->setupResolution();
+	
     // RY: Special handling for array elements.
     // FYI, if this an array and button element, then we
     // know that this is a dummy array element.  The start
@@ -401,9 +438,9 @@ IOHIDElement * IOHIDElement::newSubElement( UInt16 rangeIndex ) const
 //---------------------------------------------------------------------------
 // 
 
-bool IOHIDElement::createSubElements()
+bool IOHIDElementPrivate::createSubElements()
 {
-    IOHIDElement * element;
+    IOHIDElementPrivate * element;
     UInt32         count = getRangeCount();
     UInt32         index = getStartingRangeIndex();
     bool           ret = true;
@@ -425,7 +462,7 @@ bool IOHIDElement::createSubElements()
 //---------------------------------------------------------------------------
 //
 
-void IOHIDElement::free()
+void IOHIDElementPrivate::free()
 {
     if ( _childArray )
     {
@@ -462,14 +499,14 @@ void IOHIDElement::free()
         _colArrayReportHandlers->release();
         _colArrayReportHandlers = 0;
     }
-    
+	
     super::free();
 }
 
 //---------------------------------------------------------------------------
 // 
 
-bool IOHIDElement::addChildElement( IOHIDElement * child, bool arrayHeader)
+bool IOHIDElementPrivate::addChildElement( IOHIDElementPrivate * child, bool arrayHeader)
 {
 
     if ( _childArray == 0 )
@@ -502,12 +539,12 @@ bool IOHIDElement::addChildElement( IOHIDElement * child, bool arrayHeader)
         if (! _colArrayReportHandlers)
             return false;
 
-        IOHIDElement *	arrayReportHandler;
+        IOHIDElementPrivate *	arrayReportHandler;
         char		uniqueID[32];
         
         sprintf(uniqueID, "%4.4x%4.4x%4.4x",child->_type, child->_reportStartBit, child->_reportID);
         
-        arrayReportHandler = _colArrayReportHandlers->getObject(uniqueID);
+        arrayReportHandler = (IOHIDElementPrivate *)_colArrayReportHandlers->getObject(uniqueID);
         
         if (arrayReportHandler)
         {
@@ -547,13 +584,13 @@ bool IOHIDElement::addChildElement( IOHIDElement * child, bool arrayHeader)
     return true;
 }
 
-IOHIDElement * IOHIDElement::arrayHandlerElement(                                
+IOHIDElementPrivate * IOHIDElementPrivate::arrayHandlerElement(                                
                                 IOHIDDevice *    owner,
                                 IOHIDElementType type,
-                                IOHIDElement * child,
-                                IOHIDElement * parent)
+                                IOHIDElementPrivate * child,
+                                IOHIDElementPrivate * parent)
 {
-    IOHIDElement * element = new IOHIDElement;
+    IOHIDElementPrivate * element = new IOHIDElementPrivate;
 
     // Check arguments and call init().
 
@@ -594,6 +631,8 @@ IOHIDElement * IOHIDElement::arrayHandlerElement(
     if (element->_oldArraySelectors == NULL)
         goto ARRAY_HANDLER_ELEMENT_RELEASE;
 
+    bzero ( element->_oldArraySelectors, sizeof(UInt32) * element->_reportCount);
+    
     if (element->_reportCount > 1)
     {
         element->_duplicateReportHandler = element;
@@ -617,14 +656,57 @@ ARRAY_HANDLER_ELEMENT_RELEASE:
     
     return element;
 }
-//---------------------------------------------------------------------------
-// 
 
-bool IOHIDElement::serialize( OSSerialize * s ) const
+void IOHIDElementPrivate::setupResolution()
 {
-    IORegistryEntry * entry;
+    IOFixed resolution = 0;
+
+	if ((_usagePage != kHIDPage_GenericDesktop) || (getUsage() != kHIDUsage_GD_X))
+		return;
+    
+    if ((_physicalMin == _logicalMin) || (_physicalMax == _logicalMax))
+		return;
+
+	SInt32 logicalDiff = (_logicalMax - _logicalMin);
+	SInt32 physicalDiff = (_physicalMax - _physicalMin);
+	
+	// Since IOFixedDivide truncated fractional part and can't use floating point
+	// within the kernel, have to convert equation when using negative exponents:
+	// _resolution = ((logMax -logMin) * 10 **(-exp))/(physMax -physMin)
+
+	// Even though unitExponent is stored as SInt32, The real values are only
+	// a signed nibble that doesn't expand to the full 32 bits.
+	SInt32 resExponent = _unitExponent & 0x0F;
+	
+	if (resExponent < 8)
+	{
+		for (int i = resExponent; i > 0; i--)
+		{
+			physicalDiff *=  10;
+		}
+	}
+	else
+	{
+		for (int i = 0x10 - resExponent; i > 0; i--)
+		{
+			logicalDiff *= 10;
+		}
+	}
+	resolution = (logicalDiff / physicalDiff) << 16;
+
+	OSNumber *number = OSNumber::withNumber(resolution, 32);
+	if (number) {
+		_owner->setProperty(kIOHIDPointerResolutionKey, number);
+		number->release();
+	}
+
+}
+
+OSDictionary * IOHIDElementPrivate::createProperties() const
+{
+	OSDictionary	* properties = NULL;
+    IORegistryEntry * entry = NULL;
     UInt32            usage;
-    bool              ret = false;
         
     do {
         entry = new IORegistryEntry;
@@ -641,12 +723,11 @@ bool IOHIDElement::serialize( OSSerialize * s ) const
         entry->setProperty( kIOHIDElementTypeKey, _type, 32 );
         entry->setProperty( kIOHIDElementUsageKey, usage, 32 );
         entry->setProperty( kIOHIDElementUsagePageKey, _usagePage, 32 );
+        entry->setProperty( kIOHIDElementReportIDKey, _reportID, 32 );
 
         if ( _type == kIOHIDElementTypeCollection )
         {
             entry->setProperty( kIOHIDElementCollectionTypeKey, _collectionType, 32 );
-            
-            ret = true;
             break;
         }
 
@@ -663,7 +744,6 @@ bool IOHIDElement::serialize( OSSerialize * s ) const
                             
         if ( _isInterruptReportHandler )
         {
-            ret = true;
             break;
         }
 
@@ -684,9 +764,20 @@ bool IOHIDElement::serialize( OSSerialize * s ) const
         entry->setProperty( kIOHIDElementScaledMaxKey, _physicalMax, 32 );
         entry->setProperty( kIOHIDElementScaledMinKey, _physicalMin, 32 );
                 
-        if (_duplicateReportHandler)
+        if (IsDuplicateElement(this))
         {
-            entry->setProperty( kIOHIDElementDuplicateIndexKey, _rangeIndex, 32);
+            if (IsDuplicateReportHandler(this))
+            {
+                IOHIDElementPrivate * dupElement;
+                if (_duplicateElements && ( dupElement = (IOHIDElementPrivate *)_duplicateElements->getObject(0)))
+                {
+                    entry->setProperty( kIOHIDElementDuplicateValueSizeKey, dupElement->getElementValueSize(), 32);
+                }
+            }
+            else
+            {
+                entry->setProperty( kIOHIDElementDuplicateIndexKey, _rangeIndex, 32);
+            }
         }
         
         // RY: No reason to publish the unit and unit exponent
@@ -695,26 +786,112 @@ bool IOHIDElement::serialize( OSSerialize * s ) const
         {
             entry->setProperty( kIOHIDElementUnitKey, _units, 32 );
             entry->setProperty( kIOHIDElementUnitExponentKey, _unitExponent, 32 );
-        }
-
-        
-        ret = true;
+        }        
     }
     while ( false );
 
     if ( entry )
     {
-        if ( ret ) ret = entry->serializeProperties(s);
+        if (properties = entry->getPropertyTable()) 
+			properties->retain();
+		
         entry->release();
     }
     
+	return properties;
+}
+
+//---------------------------------------------------------------------------
+// 
+
+bool IOHIDElementPrivate::serialize( OSSerialize * s ) const
+{
+    bool			ret = true;
+	OSDictionary *	properties = createProperties();
+	
+	if ( properties )
+	{
+        if ( !(IsDuplicateElement(this) && !IsDuplicateReportHandler(this) && (GetDuplicateElementCount(this) > 32)) )
+            ret = properties->serialize(s);
+            
+		properties->release();
+	}
+	
     return ret;
 }
 
 //---------------------------------------------------------------------------
 // 
 
-UInt32 IOHIDElement::getElementValueSize() const
+static inline bool CompareProperty( OSDictionary * properties, OSDictionary * matching, const char * key)
+{
+    // We return success if we match the key in the dictionary with the key in
+    // the property table, or if the prop isn't present
+    //
+    OSObject 	* value;
+    
+    value = matching->getObject( key );
+
+    return ( value ) ? value->isEqualTo( properties->getObject( key )) : true;
+}
+
+//---------------------------------------------------------------------------
+// 
+
+bool IOHIDElementPrivate::matchProperties(OSDictionary * matching)
+{
+	OSDictionary *  properties  = NULL;
+	bool			ret			= true;
+	
+	// Compare properties.
+	do {
+		if ( !matching )
+			break;
+			
+		if ( !( properties	= createProperties() ) )
+		{
+			ret = false;
+			break;
+		}			
+		
+		if (   !CompareProperty(properties, matching, kIOHIDElementCookieKey)
+			|| !CompareProperty(properties, matching, kIOHIDElementTypeKey)
+			|| !CompareProperty(properties, matching, kIOHIDElementCollectionTypeKey)
+			|| !CompareProperty(properties, matching, kIOHIDElementUsageKey)
+			|| !CompareProperty(properties, matching, kIOHIDElementUsagePageKey)
+			|| !CompareProperty(properties, matching, kIOHIDElementMinKey)
+			|| !CompareProperty(properties, matching, kIOHIDElementMaxKey)
+			|| !CompareProperty(properties, matching, kIOHIDElementScaledMaxKey)
+			|| !CompareProperty(properties, matching, kIOHIDElementSizeKey)
+			|| !CompareProperty(properties, matching, kIOHIDElementReportSizeKey)
+			|| !CompareProperty(properties, matching, kIOHIDElementReportCountKey)
+			|| !CompareProperty(properties, matching, kIOHIDElementIsArrayKey)
+			|| !CompareProperty(properties, matching, kIOHIDElementIsRelativeKey)
+			|| !CompareProperty(properties, matching, kIOHIDElementIsWrappingKey)
+			|| !CompareProperty(properties, matching, kIOHIDElementIsNonLinearKey)
+			|| !CompareProperty(properties, matching, kIOHIDElementHasPreferredStateKey)
+			|| !CompareProperty(properties, matching, kIOHIDElementHasNullStateKey)
+			|| !CompareProperty(properties, matching, kIOHIDElementVendorSpecificKey)
+			|| !CompareProperty(properties, matching, kIOHIDElementUnitKey)
+			|| !CompareProperty(properties, matching, kIOHIDElementUnitExponentKey)
+			|| !CompareProperty(properties, matching, kIOHIDElementNameKey)
+			|| !CompareProperty(properties, matching, kIOHIDElementValueLocationKey)
+			|| !CompareProperty(properties, matching, kIOHIDElementDuplicateIndexKey)
+			|| !CompareProperty(properties, matching, kIOHIDElementParentCollectionKey))
+		{
+			ret = false;
+		}
+		properties->release();
+		
+	} while ( false );
+	
+	return ret;
+}
+
+//---------------------------------------------------------------------------
+// 
+
+UInt32 IOHIDElementPrivate::getElementValueSize() const
 {
     UInt32  size        = sizeof(IOHIDElementValue);
     UInt32  reportWords = (_reportBits * _reportCount) / (sizeof(UInt32) * 8);
@@ -743,10 +920,10 @@ UInt32 IOHIDElement::getElementValueSize() const
 
 static void readReportBits( const UInt8 * src,
                            UInt32 *      dst,
-                           UInt32        srcStartBit,
                            UInt32        bitsToCopy,
-                           bool          shouldSignExtend,
-                           bool *        valueChanged )
+                           UInt32        srcStartBit = 0,
+                           bool          shouldSignExtend = false,
+                           bool *        valueChanged = 0)
 {
     UInt32 srcOffset;
     UInt32 srcShift;
@@ -801,7 +978,7 @@ static void readReportBits( const UInt8 * src,
 			if ( dst[lastDstOffset] != word )
             {
                 dst[lastDstOffset] = word;
-                *valueChanged = true;
+				if (valueChanged) *valueChanged = true;
             }
             word = 0;
             lastDstOffset = dstOffset;
@@ -811,8 +988,8 @@ static void readReportBits( const UInt8 * src,
 
 static void writeReportBits( const UInt32 * src,
                            UInt8 *        dst,
-                           UInt32         dstStartBit,
-                           UInt32         bitsToCopy)
+                           UInt32         bitsToCopy,
+                           UInt32         dstStartBit = 0)
 {
     UInt32 dstOffset;
     UInt32 dstShift;
@@ -844,14 +1021,18 @@ static void writeReportBits( const UInt32 * src,
 //---------------------------------------------------------------------------
 // 
 
-bool IOHIDElement::processReport( UInt8                reportID,
-                                  void *               reportData,
-                                  UInt32               reportBits,
-                                  const AbsoluteTime * timestamp,
-                                  IOHIDElement **      next )
+bool IOHIDElementPrivate::processReport(
+                                    UInt8                       reportID,
+                                    void *                      reportData,
+                                    UInt32                      reportBits,
+                                    const AbsoluteTime *        timestamp,
+                                    IOHIDElementPrivate **      next,
+                                    IOOptionBits                options)
 {
-    IOHIDEventQueue * queue;
-    bool              changed = false;
+    IOHIDEventQueue *   queue;
+    UInt32              previousValue;
+	AbsoluteTime		previousTimeStamp;
+    bool				changed = false;
         
     // Set next pointer to the next report handler in the chain.
     // If this is an array, set the report handler to the one
@@ -859,6 +1040,11 @@ bool IOHIDElement::processReport( UInt8                reportID,
     if (next)
     {
         *next = _nextReportHandler;
+        
+        if (_isInterruptReportHandler && (options & kIOHIDReportOptionNotInterrupt))
+        {
+            return false;
+        }
         
         if (IsArrayElement(this) && !IsArrayReportHandler(this))
         {
@@ -889,12 +1075,15 @@ bool IOHIDElement::processReport( UInt8                reportID,
         // the value is complete.
         _elementValue->generation++;
 
+        previousValue		= _elementValue->value[0];
+		previousTimeStamp   = _elementValue->timestamp;
+		
         // Get the element value from the report.
 
         readReportBits( (UInt8 *) reportData,   /* source buffer      */
                        _elementValue->value,   /* destination buffer */
-                       _reportStartBit,        /* source start bit   */
                        (_reportBits * _reportCount), /* bits to copy       */
+                       _reportStartBit,        /* source start bit   */
                        (((SInt32)_logicalMin < 0) || ((SInt32)_logicalMax < 0)), /* should sign extend */
                        &changed );             /* did value change?  */
 
@@ -902,24 +1091,35 @@ bool IOHIDElement::processReport( UInt8                reportID,
         // We should set the time stamp if the generation is 1 regardless if the value
         // changed.  This will insure that an initial value of 0 will have the correct
         // timestamp
-        if ( changed || (_flags & kHIDDataRelativeBit) || (_elementValue->generation == 1))
-        {
+        do {
+            if (!changed && ((_flags & kHIDDataRelativeBit) == 0) && !_isInterruptReportHandler) break;
+
+            if ((_flags & kHIDDataRelativeBit) 
+                && (_reportBits <= 32) 
+                && (previousValue == 0)
+                && (_elementValue->value[0] == 0)) break;
+                
             _elementValue->timestamp = *timestamp;
-
-            if (IsArrayElement(this) && IsArrayReportHandler(this))
-                processArrayReport(reportID, reportData, reportBits, timestamp);
-
-            if ( _queueArray )
+                
+            if (IsArrayElement(this))
             {
-                for ( UInt32 i = 0;
-                      (queue = (IOHIDEventQueue *) _queueArray->getObject(i));
-                      i++ )
+                if (IsArrayReportHandler(this))
                 {
-                    queue->enqueue( (void *) _elementValue,
-                                    _elementValue->totalSize );
+                    processArrayReport(reportID, reportData, reportBits, timestamp);
                 }
             }
-        }
+    
+            if ( !_queueArray )
+                break;
+                
+            for ( UInt32 i = 0;
+                  (queue = (IOHIDEventQueue *) _queueArray->getObject(i));
+                  i++ )
+            {
+                queue->enqueue( (void *) _elementValue,
+                                _elementValue->totalSize );
+            }
+        } while ( 0 );
 
         _elementValue->generation++;
         
@@ -936,10 +1136,10 @@ bool IOHIDElement::processReport( UInt8                reportID,
 //---------------------------------------------------------------------------
 // 
 
-bool IOHIDElement::createReport( UInt8           reportID,
+bool IOHIDElementPrivate::createReport( UInt8           reportID,
                                  void *		 reportData,  // this report should be alloced outisde this method.
                                  UInt32 *        reportLength,
-                                 IOHIDElement ** next )
+                                 IOHIDElementPrivate ** next )
 {
     bool handled = false;
 
@@ -1019,8 +1219,8 @@ bool IOHIDElement::createReport( UInt8           reportID,
         {
             writeReportBits( _elementValue->value,   	/* source buffer      */
                            (UInt8 *) reportData,  	/* destination buffer */
-                           _reportStartBit,       	/* dst start bit      */                           
-                           (_reportBits * _reportCount));/* bits to copy       */
+                           (_reportBits * _reportCount),/* bits to copy       */
+                           _reportStartBit);       	/* dst start bit      */                           
 
             handled = true;
             
@@ -1037,8 +1237,9 @@ bool IOHIDElement::createReport( UInt8           reportID,
 //---------------------------------------------------------------------------
 // 
 
-bool IOHIDElement::setMemoryForElementValue( IOVirtualAddress address,
-                                             void *           location )
+bool IOHIDElementPrivate::setMemoryForElementValue(
+                                    IOVirtualAddress        address,
+                                    void *                  location)
 {
     _elementValue = (IOHIDElementValue *) address;
     _elementValueLocation = location;
@@ -1056,7 +1257,7 @@ bool IOHIDElement::setMemoryForElementValue( IOVirtualAddress address,
 //---------------------------------------------------------------------------
 // Return the number of elements in a usage range.
 
-UInt32 IOHIDElement::getRangeCount() const
+UInt32 IOHIDElementPrivate::getRangeCount() const
 {
     // FIXME - shouldn't we use logical min/max?
 
@@ -1068,7 +1269,7 @@ UInt32 IOHIDElement::getRangeCount() const
 //---------------------------------------------------------------------------
 // Return the number of elements in a usage range.
 
-UInt32 IOHIDElement::getStartingRangeIndex() const
+UInt32 IOHIDElementPrivate::getStartingRangeIndex() const
 {
     // Check to see if we have multiple elements with the same usage.
     return (_reportCount > 1) ? 0 : 1;
@@ -1078,10 +1279,10 @@ UInt32 IOHIDElement::getStartingRangeIndex() const
 //---------------------------------------------------------------------------
 // 
 
-IOHIDElement *
-IOHIDElement::setNextReportHandler( IOHIDElement * element )
+IOHIDElementPrivate *
+IOHIDElementPrivate::setNextReportHandler( IOHIDElementPrivate * element )
 {
-    IOHIDElement * prev = _nextReportHandler;
+    IOHIDElementPrivate * prev = _nextReportHandler;
     _nextReportHandler  = element;
     return prev;
 }
@@ -1089,7 +1290,7 @@ IOHIDElement::setNextReportHandler( IOHIDElement * element )
 //---------------------------------------------------------------------------
 // 
 
-bool IOHIDElement::getReportType( IOHIDReportType * reportType ) const
+bool IOHIDElementPrivate::getReportType( IOHIDReportType * reportType ) const
 {
     if ( _type <= kIOHIDElementTypeInput_ScanCodes )
         *reportType = kIOHIDReportTypeInput;
@@ -1106,8 +1307,11 @@ bool IOHIDElement::getReportType( IOHIDReportType * reportType ) const
 //---------------------------------------------------------------------------
 // 
 
-bool IOHIDElement::addEventQueue( IOHIDEventQueue * queue )
+bool IOHIDElementPrivate::addEventQueue( IOHIDEventQueue * queue )
 {
+    if ( !queue )
+        return false;
+        
     if ( _queueArray == 0 )
     {
         _queueArray = OSArray::withCapacity(4);
@@ -1116,15 +1320,22 @@ bool IOHIDElement::addEventQueue( IOHIDEventQueue * queue )
     if ( hasEventQueue(queue) == true )
         return false;
 
+    queue->addElement( this );
+
     return _queueArray ? _queueArray->setObject( queue ) : false;
 }
 
 //---------------------------------------------------------------------------
 // 
 
-bool IOHIDElement::removeEventQueue( IOHIDEventQueue * queue )
+bool IOHIDElementPrivate::removeEventQueue( IOHIDEventQueue * queue )
 {
     OSObject * obj = 0;
+    
+    if ( !queue )
+        return false;
+        
+    queue->removeElement( this );
 
     for ( UInt32 i = 0;
           _queueArray && (obj = _queueArray->getObject(i)); i++ )
@@ -1147,7 +1358,7 @@ bool IOHIDElement::removeEventQueue( IOHIDEventQueue * queue )
 //---------------------------------------------------------------------------
 // 
 
-bool IOHIDElement::hasEventQueue( IOHIDEventQueue * queue )
+bool IOHIDElementPrivate::hasEventQueue( IOHIDEventQueue * queue )
 {
     OSObject * obj = 0;
 
@@ -1164,7 +1375,7 @@ bool IOHIDElement::hasEventQueue( IOHIDEventQueue * queue )
 //---------------------------------------------------------------------------
 // 
 
-UInt32 IOHIDElement::setReportSize( UInt32 numberOfBits )
+UInt32 IOHIDElementPrivate::setReportSize( UInt32 numberOfBits )
 {
     UInt32 oldSize = _reportSize;
     _reportSize = numberOfBits;
@@ -1176,7 +1387,7 @@ UInt32 IOHIDElement::setReportSize( UInt32 numberOfBits )
 // be based on the _logicalMin or _logicalMax depending on bit space.  If
 // no room is available to go outside the range, the value will remain 
 // unchanged.
-void IOHIDElement::setOutOfBoundsValue()
+void IOHIDElementPrivate::setOutOfBoundsValue()
 {
 
     // Make sure we are not dealing with long element value type
@@ -1204,18 +1415,18 @@ void IOHIDElement::setOutOfBoundsValue()
     }
 }
 
-bool IOHIDElement::createDuplicateReport(UInt8		reportID,
+bool IOHIDElementPrivate::createDuplicateReport(UInt8		reportID,
                                         void *		reportData,
                                         UInt32 *	reportLength)
 {
     bool		pending = false;
-    IOHIDElement 	*element;
+    IOHIDElementPrivate 	*element;
 
     // RY: Then, check the other duplicates to see if they are currently 
     // pending.  
-    for (int i=0;  _duplicateElements && i<_duplicateElements->getCount(); i++) 
+    for (unsigned i=0;  _duplicateElements && i<_duplicateElements->getCount(); i++) 
     {
-        if ((element = _duplicateElements->getObject(i)) &&
+        if ((element = (IOHIDElementPrivate *)_duplicateElements->getObject(i)) &&
             (element->_transactionState == kIOHIDTransactionStatePending))
         {
             pending = true;
@@ -1227,21 +1438,20 @@ bool IOHIDElement::createDuplicateReport(UInt8		reportID,
     return pending;
 }
 
-bool IOHIDElement::createArrayReport(UInt8	reportID,
+bool IOHIDElementPrivate::createArrayReport(UInt8	reportID,
                                     void *	reportData,
                                     UInt32 *	reportLength) 
 {
-    IOHIDElement 	*element, *arrayElement;
-    bool		changed;
+    IOHIDElementPrivate 	*element, *arrayElement;
     UInt32		arraySel;
-    UInt32		reportIndex = 0;
+    UInt32		i, reportIndex = 0;
     
     if (createDuplicateReport(reportID, reportData, reportLength))
         return true;
                         
-    for (int i=0; i<_arrayItems->getCount(); i++)
+    for (i=0; i<_arrayItems->getCount(); i++)
     {
-        element = (IOHIDElement *)(_arrayItems->getObject(i));
+        element = (IOHIDElementPrivate *)(_arrayItems->getObject(i));
 
         if (!element)
             continue;
@@ -1253,7 +1463,7 @@ bool IOHIDElement::createArrayReport(UInt8	reportID,
 
         arraySel = GetArrayItemSel(i);
 
-        if (arrayElement = (_duplicateElements) ? _duplicateElements->getObject(reportIndex) : this)
+        if (arrayElement = (_duplicateElements) ? (IOHIDElementPrivate *)_duplicateElements->getObject(reportIndex) : this)
         {
             arrayElement->_elementValue->value[0] = arraySel;
             arrayElement->_transactionState = kIOHIDTransactionStatePending;
@@ -1273,7 +1483,7 @@ bool IOHIDElement::createArrayReport(UInt8	reportID,
     arraySel = 0;
     for (i=reportIndex; i<_reportCount; i++)
     {        
-        if (arrayElement = (_duplicateElements) ? _duplicateElements->getObject(reportIndex) : this)
+        if (arrayElement = (_duplicateElements) ? (IOHIDElementPrivate *)_duplicateElements->getObject(reportIndex) : this)
         {
             arrayElement->_elementValue->value[0] = arraySel;
             arrayElement->_transactionState = kIOHIDTransactionStatePending;
@@ -1284,15 +1494,15 @@ bool IOHIDElement::createArrayReport(UInt8	reportID,
     return true;
 }
 
-void IOHIDElement::setArrayElementValue(UInt32 index, UInt32 value)
+void IOHIDElementPrivate::setArrayElementValue(UInt32 index, UInt32 value)
 {
-    IOHIDElement 	*element;
+    IOHIDElementPrivate 	*element;
     IOHIDEventQueue	*queue;
     
     if ( !_arrayItems || (index > _arrayItems->getCount()))
         return;
         
-    element = (IOHIDElement *)(_arrayItems->getObject(index));
+    element = (IOHIDElementPrivate *)(_arrayItems->getObject(index));
     
     if (!element) 
         return;
@@ -1322,40 +1532,44 @@ void IOHIDElement::setArrayElementValue(UInt32 index, UInt32 value)
 
 }
 
-bool IOHIDElement::processArrayReport(	UInt8			reportID,
+bool IOHIDElementPrivate::processArrayReport(	UInt8			reportID,
                                         void *			reportData,
                                         UInt32			reportBits,
                                         const AbsoluteTime *	timestamp)
 {
-    IOHIDElement *element;
-    UInt32	arraySel, prevArraySel;
-    UInt32	iNewArray, iOldArray, startBit;
-    bool	found, changed;
-    
-    // If the generation == 1, we know that this is first time that 
-    // we have processed this array report.  Set the time stamp on 
-    // all array elements.
-    if (_elementValue->generation == 1)
-    {            
-        for (int i=0; i < _arrayItems->getCount(); i++)
-            setArrayElementValue(i, 0);
-    }
-    
+    IOHIDElementPrivate *	element		= NULL;
+    UInt32		arraySel	= 0;
+    UInt32		iNewArray	= 0;
+    UInt32		iOldArray	= 0;
+    bool		found		= false;
+    bool		changed		= false;
+        
     // RY: Process the arry selector elements.  If any of their values
     // haven't changed, don't bother with any further processing.  
     if (_duplicateElements)
     {
-        changed = false;
+        bool keyboard = found = (_usagePage == kHIDPage_KeyboardOrKeypad);
         for (iNewArray = 0; iNewArray < _reportCount; iNewArray ++)
         {
-            if (element = _duplicateElements->getObject(iNewArray))
+            if (element = (IOHIDElementPrivate *)_duplicateElements->getObject(iNewArray))
             {
                 changed |= element->processReport(reportID, reportData, reportBits, timestamp, 0);
+                if (keyboard && (element->_elementValue->value[0] != kHIDUsage_KeyboardErrorRollOver))
+                {
+                    found = false;
+                }
             }
         }
         
         if (!changed)
             return changed;
+        else if (keyboard)
+        {
+            setArrayElementValue(GetArrayItemIndex(kHIDUsage_KeyboardErrorRollOver), (found ? 1 : 0));
+            
+            if (found)
+                return false;
+        }
     }
                                     
     // Check the existing indexes against the originals
@@ -1363,17 +1577,11 @@ bool IOHIDElement::processArrayReport(	UInt8			reportID,
     {
         arraySel = _oldArraySelectors[iOldArray];
         
-        // If we've seen this value before,
-        // we can break out of this loop.
-        if ((iOldArray > 0) && (prevArraySel == arraySel))
-                break;
-                
-        prevArraySel = arraySel;
         found = false;
 
         for (iNewArray = 0; iNewArray < _reportCount; iNewArray ++)
         {
-            element = (_duplicateElements) ? _duplicateElements->getObject(iNewArray) : this;
+            element = (_duplicateElements) ? (IOHIDElementPrivate *)_duplicateElements->getObject(iNewArray) : this;
             if (element && (arraySel == element->_elementValue->value[0]))
             {
                 found = true;
@@ -1389,17 +1597,11 @@ bool IOHIDElement::processArrayReport(	UInt8			reportID,
     // Now add new indexes to _oldArraySelectors
     for (iNewArray = 0; iNewArray < _reportCount; iNewArray ++)
     {
-        if (!(element = (_duplicateElements) ? _duplicateElements->getObject(iNewArray) : this))
+        if (!(element = (_duplicateElements) ? (IOHIDElementPrivate *)_duplicateElements->getObject(iNewArray) : this))
             continue;
             
         arraySel = element->_elementValue->value[0];
                 
-        // If we've seen this value before,
-        // we can break out of this loop.
-        if ((iNewArray > 0) && (prevArraySel == arraySel))
-                break;
-                
-        prevArraySel = arraySel;
         found = false;
 
         for (iOldArray = 0; iOldArray < _reportCount; iOldArray ++)
@@ -1419,9 +1621,136 @@ bool IOHIDElement::processArrayReport(	UInt8			reportID,
     // save the new array to _oldArraySelectors for future reference
     for (iOldArray = 0; iOldArray < _reportCount; iOldArray ++)
     {
-        if (element = (_duplicateElements) ? _duplicateElements->getObject(iOldArray) : this)
+        if (element = (_duplicateElements) ? (IOHIDElementPrivate *)_duplicateElements->getObject(iOldArray) : this)
         _oldArraySelectors[iOldArray] = element->_elementValue->value[0];
     }
 
     return changed;
+}
+
+IOHIDElementCookie IOHIDElementPrivate::getCookie()
+{   return _cookie;   }
+
+IOHIDElementType IOHIDElementPrivate::getType()
+{   return _type;   }
+
+IOHIDElementCollectionType IOHIDElementPrivate::getCollectionType()
+{   return _collectionType;   }
+
+OSArray * IOHIDElementPrivate::getChildElements()
+{   return _childArray;   }
+
+IOHIDElement * IOHIDElementPrivate::getParentElement()
+{   return _parent;   }
+
+UInt32 IOHIDElementPrivate::getUsagePage()
+{   return _usagePage;   }
+
+UInt32 IOHIDElementPrivate::getUsage()
+{
+	return (_usageMax != _usageMin) ? _usageMin + _rangeIndex  : _usageMin;
+}
+
+UInt32 IOHIDElementPrivate::getReportID()
+{   return _reportID;   }
+
+UInt32 IOHIDElementPrivate::getReportSize()
+{   return _reportBits;   }
+
+UInt32 IOHIDElementPrivate::getReportCount()
+{   return _reportCount;   }
+
+UInt32 IOHIDElementPrivate::getFlags()
+{   return _flags;  }
+
+UInt32 IOHIDElementPrivate::getLogicalMin()
+{   return _logicalMin;   }
+
+UInt32 IOHIDElementPrivate::getLogicalMax()
+{   return _logicalMax;   }
+
+UInt32 IOHIDElementPrivate::getPhysicalMin()
+{   return _physicalMin;   }
+
+UInt32 IOHIDElementPrivate::getPhysicalMax()
+{   return _physicalMax;   }
+
+UInt32 IOHIDElementPrivate::getUnit()
+{   return _units;   }
+
+UInt32 IOHIDElementPrivate::getUnitExponent()
+{   return _unitExponent;   }
+
+UInt32 IOHIDElementPrivate::getValue()
+{   
+	return ((_reportBits * _reportCount) < 32) ? _elementValue->value[0] : 0;
+}
+
+OSData * IOHIDElementPrivate::getDataValue()
+{   
+	UInt32  bitsToCopy	= (_reportBits * _reportCount);
+	
+	if ( !_dataValue)
+	{
+		_dataValue = OSData::withCapacity(getByteSize());
+	}
+
+	writeReportBits((const UInt32*)_elementValue->value, (UInt8 *)_dataValue->getBytesNoCopy(), bitsToCopy);
+	
+	return _dataValue;
+}
+
+void IOHIDElementPrivate::setValue(UInt32 value)
+{ 
+	UInt32  previousValue = _elementValue->value[0];
+	
+	if (previousValue == value)
+		return;
+		
+	_elementValue->value[0] = value;
+	
+	if (_owner->postElementValues(&_cookie, 1) != kIOReturnSuccess)
+		_elementValue->value[0] = previousValue;
+}
+
+void IOHIDElementPrivate::setDataValue(OSData * value)
+{
+	OSData * previousValue;
+	
+	
+	if ( !value ) return;
+	
+	previousValue = getDataValue();
+	
+	setDataBits(value);
+	
+	if (_owner->postElementValues(&_cookie, 1) != kIOReturnSuccess)
+		setDataBits(previousValue);
+}
+
+void IOHIDElementPrivate::setDataBits(OSData *value)
+{
+	UInt32  bitsToCopy;
+
+	if ( !value ) return;
+
+	bitsToCopy = min ( (value->getLength() << 3), (_reportBits * _reportCount) );
+	
+	readReportBits((const UInt8*)value->getBytesNoCopy(), _elementValue->value, bitsToCopy);
+
+}
+
+AbsoluteTime IOHIDElementPrivate::getTimeStamp()
+{
+	return _elementValue->timestamp;
+}
+
+IOByteCount IOHIDElementPrivate::getByteSize()
+{
+	IOByteCount byteSize;
+	
+	byteSize = (_reportBits * _reportCount) / (sizeof(UInt8 *) * 8);
+	byteSize += ((_reportBits * _reportCount) % (sizeof(UInt8 *) * 8)) ? 1 : 0;
+	
+	return byteSize;
 }

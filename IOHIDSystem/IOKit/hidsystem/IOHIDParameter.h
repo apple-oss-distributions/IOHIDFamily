@@ -55,16 +55,20 @@
 
 #define kIOHIDParametersKey				"HIDParameters"
 
+#define kIOHIDVirtualHIDevice                   "HIDVirtualDevice"
+
 #define kIOHIDKeyRepeatKey				"HIDKeyRepeat"
 #define kIOHIDInitialKeyRepeatKey		"HIDInitialKeyRepeat"
 #define kIOHIDKeyMappingKey				"HIDKeyMapping"
 #define kIOHIDResetKeyboardKey			"HIDResetKeyboard"
 
-#define kIOHIDKeyboardSwapCommandAltKey		"HIDKeyboardSwapCommandAlt"
-#define kIOHIDKeyboardSwapControlCapsLockKey	"HIDKeyboardSwapControlCapsLock"
-#define kIOHIDKeyboardCapsLockDoesLockKey	"HIDKeyboardCapsLockDoesLock"
-#define kIOHIDKeyboardSupportsF12EjectKey	"HIDKeyboardSupportsF12Eject"
-#define kIOHIDKeyboardSupportedModifiersKey   "HIDKeyboardSupportedModifiers"
+#define kIOHIDKeyboardModifierMappingPairsKey   "HIDKeyboardModifierMappingPairs"
+#define kIOHIDKeyboardModifierMappingSrcKey     "HIDKeyboardModifierMappingSrc"
+#define kIOHIDKeyboardModifierMappingDstKey     "HIDKeyboardModifierMappingDst"
+
+#define kIOHIDKeyboardCapsLockDoesLockKey       "HIDKeyboardCapsLockDoesLock"
+#define kIOHIDKeyboardSupportsF12EjectKey       "HIDKeyboardSupportsF12Eject"
+#define kIOHIDKeyboardSupportedModifiersKey     "HIDKeyboardSupportedModifiers"
 
 #define kIOHIDPointerResolutionKey		"HIDPointerResolution"
 #define kIOHIDResetPointerKey			"HIDResetPointer"
@@ -82,7 +86,13 @@
 #define kIOHIDScrollResetKey			"HIDScrollReset"
 #define kIOHIDScrollResolutionKey		"HIDScrollResolution"
 #define kIOHIDScrollAccelerationKey		"HIDScrollAcceleration"
+#define kIOHIDScrollAccelerationTypeKey     "HIDScrollAccelerationType"
 #define kIOHIDScrollAccelerationTableKey	"HIDScrollAccelerationTable"
+
+#define kIOHIDScrollMouseButtonKey      "HIDScrollMouseButton"
+
+#define kIOHIDTrackpadScrollAccelerationKey "HIDTrackpadScrollAcceleration"
+#define kIOHIDMouseScrollAccelerationKey   "HIDMouseScrollAcceleration"
 
 #define kIOHIDTrackpadAccelerationType	"HIDTrackpadAcceleration"
 #define kIOHIDMouseAccelerationType		"HIDMouseAcceleration"
@@ -125,6 +135,8 @@
 #define kIOHIDF12EjectDelayKey			"HIDF12EjectDelay"
 
 #define kIOHIDMouseKeysOnKey			"HIDMouseKeysOn"
+
+#define kIOHIDUseKeyswitchKey                "HIDUseKeyswitch"
 
 
 // the following are misspelled keys present in the system
