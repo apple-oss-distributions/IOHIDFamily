@@ -1,21 +1,22 @@
 /*
- * Copyright (c) 1998-2000 Apple Computer, Inc. All rights reserved.
- *
  * @APPLE_LICENSE_HEADER_START@
  * 
- * The contents of this file constitute Original Code as defined in and
- * are subject to the Apple Public Source License Version 1.1 (the
- * "License").  You may not use this file except in compliance with the
- * License.  Please obtain a copy of the License at
- * http://www.apple.com/publicsource and read it before using this file.
+ * Copyright (c) 1999-2003 Apple Computer, Inc.  All Rights Reserved.
  * 
- * This Original Code and all software distributed under the License are
- * distributed on an "AS IS" basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+ * This file contains Original Code and/or Modifications of Original Code
+ * as defined in and that are subject to the Apple Public Source License
+ * Version 2.0 (the 'License'). You may not use this file except in
+ * compliance with the License. Please obtain a copy of the License at
+ * http://www.opensource.apple.com/apsl/ and read it before using this
+ * file.
+ * 
+ * The Original Code and all software distributed under the License are
+ * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
  * INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE OR NON-INFRINGEMENT.  Please see the
- * License for the specific language governing rights and limitations
- * under the License.
+ * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
+ * Please see the License for the specific language governing rights and
+ * limitations under the License.
  * 
  * @APPLE_LICENSE_HEADER_END@
  */
@@ -76,8 +77,12 @@
 #define NX_KEYTYPE_FAST			19
 #define NX_KEYTYPE_REWIND		20
 
-#define	NX_NUMSPECIALKEYS		21 /* Maximum number of special keys */
-#define NX_NUM_SCANNED_SPECIALKEYS	21 /* First 19 special keys are */
+#define NX_KEYTYPE_ILLUMINATION_UP	21
+#define NX_KEYTYPE_ILLUMINATION_DOWN	22
+#define NX_KEYTYPE_ILLUMINATION_TOGGLE	23
+
+#define	NX_NUMSPECIALKEYS		24 /* Maximum number of special keys */
+#define NX_NUM_SCANNED_SPECIALKEYS	24 /* First 24 special keys are */
 					  /* actively scanned in kernel */
 
 /* Mask of special keys that are posted as events */
@@ -90,7 +95,10 @@
                                 (1 << NX_KEYTYPE_LAUNCH_PANEL) | (1 << NX_KEYTYPE_EJECT) | \
                                 (1 << NX_KEYTYPE_VIDMIRROR) | (1 << NX_KEYTYPE_PLAY) | \
                                 (1 << NX_KEYTYPE_NEXT) | (1 << NX_KEYTYPE_PREVIOUS) | \
-                                (1 << NX_KEYTYPE_FAST) | (1 << NX_KEYTYPE_REWIND) | 0)
+                                (1 << NX_KEYTYPE_FAST) | (1 << NX_KEYTYPE_REWIND) | \
+                                (1 << NX_KEYTYPE_ILLUMINATION_UP) | \
+                                (1 << NX_KEYTYPE_ILLUMINATION_DOWN) | \
+                                (1 << NX_KEYTYPE_ILLUMINATION_TOGGLE) | 0)
 
 /* Modifier key indices into modDefs[] */
 #define NX_MODIFIERKEY_ALPHALOCK	0
@@ -102,6 +110,12 @@
 #define NX_MODIFIERKEY_HELP		6
 #define NX_MODIFIERKEY_SECONDARYFN     	7
 #define NX_MODIFIERKEY_NUMLOCK		8
+
+/* support for right hand modifier */
+#define NX_MODIFIERKEY_RSHIFT		9
+#define NX_MODIFIERKEY_RCONTROL		10
+#define NX_MODIFIERKEY_RALTERNATE	11
+#define NX_MODIFIERKEY_RCOMMAND		12
 
 
 typedef struct _NXParsedKeyMapping_ {

@@ -1,21 +1,23 @@
 /*
- * Copyright (c) 2000 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
- * The contents of this file constitute Original Code as defined in and
- * are subject to the Apple Public Source License Version 1.1 (the
- * "License").  You may not use this file except in compliance with the
- * License.  Please obtain a copy of the License at
- * http://www.apple.com/publicsource and read it before using this file.
+ * Copyright (c) 1999-2003 Apple Computer, Inc.  All Rights Reserved.
  * 
- * This Original Code and all software distributed under the License are
- * distributed on an "AS IS" basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+ * This file contains Original Code and/or Modifications of Original Code
+ * as defined in and that are subject to the Apple Public Source License
+ * Version 2.0 (the 'License'). You may not use this file except in
+ * compliance with the License. Please obtain a copy of the License at
+ * http://www.opensource.apple.com/apsl/ and read it before using this
+ * file.
+ * 
+ * The Original Code and all software distributed under the License are
+ * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
  * INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE OR NON-INFRINGEMENT.  Please see the
- * License for the specific language governing rights and limitations
- * under the License.
+ * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
+ * Please see the License for the specific language governing rights and
+ * limitations under the License.
  * 
  * @APPLE_LICENSE_HEADER_END@
  */
@@ -24,18 +26,22 @@
 #define _IOKIT_HID_IOHIDDEVICE_H
 
 #include <IOKit/IOService.h>
+#include <IOKit/IOMessage.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/hidsystem/IOHIDDescriptorParser.h>
 #include "IOHIDKeys.h"
 
+class  IOHIDSystem;
 class  IOHIDPointing;
+class  IOHIDKeyboard;
+class  IOHIDConsumer;
 class  IOHIDElement;
 class  IOHIDEventQueue;
 struct IOHIDReportHandler;
 
 /*!
     @typedef IOHIDCompletionAction
-    Function called when set/get report completes
+    @abstract Function called when set/get report completes
     @param target The target specified in the IOHIDCompletion struct.
     @param parameter The parameter specified in the IOHIDCompletion struct.
     @param status Completion status
@@ -48,7 +54,7 @@ typedef void (*IOHIDCompletionAction)(
 
 /*!
     @typedef IOHIDCompletion
-    Struct spefifying action to perform when set/get report completes.
+    @abstract Struct spefifying action to perform when set/get report completes.
     @param target The target to pass to the action function.
     @param action The function to call.
     @param parameter The parameter to pass to the action function.
@@ -58,6 +64,18 @@ typedef struct IOHIDCompletion {
     IOHIDCompletionAction	action;
     void *			parameter;
 } IOHIDCompletion;
+
+/*!
+    @enum IOHIDReportOption
+    @abstract Option bits for IOHIDDevice::handleReport, 
+    IOHIDDevice::getReport, and IOHIDDevice::setReport
+    @constant kIOHIDReportOptionNotInterrupt Tells method that the report
+    passed was not interrupt driven.
+*/
+enum
+{
+    kIOHIDReportOptionNotInterrupt	= 0x100
+};
 
 
 /*! @class IOHIDDevice : public IOService
@@ -81,7 +99,7 @@ typedef struct IOHIDCompletion {
 class IOHIDDevice : public IOService
 {
     OSDeclareDefaultStructors( IOHIDDevice )
-
+    
 private:
     OSArray *                   _elementArray;
     UInt32                      _dataElementIndex;
@@ -96,19 +114,19 @@ private:
 
     struct ExpansionData { 
         IOHIDPointing *		pointingNub;
+        IOHIDKeyboard *		keyboardNub;
+        IOHIDConsumer *		consumerNub;
         OSSet *                 clientSet;
-        IOService *		displayManager;
+        IOService *		seizedClient;
+        IOHIDSystem *		hidSystem;
+        AbsoluteTime		eventDeadline;
         IONotifier *		publishNotify;
+        OSArray *		inputInterruptElementArray;
     };
     /*! @var reserved
         Reserved for future use.  (Internal use only)  */
     ExpansionData * _reserved;
     
-    #define _clientSet		_reserved->clientSet
-    #define _pointingNub	_reserved->pointingNub
-    #define _displayManager	_reserved->displayManager
-    #define _publishNotify	_reserved->publishNotify
-
     // HID report descriptor parsing support.
 
     bool linkToParent( const OSArray * array,
@@ -130,6 +148,10 @@ private:
                                UInt32              hidReportType,
                                IOHIDElementType    elementType,
                                UInt32              maxCount );
+                               
+    bool createReportHandlerElements( HIDPreparsedDataRef parseData);
+
+    OSArray * newDeviceUsagePairs();
 
     bool getReportCountAndSizes( HIDPreparsedDataRef parseData );
 
@@ -147,7 +169,7 @@ private:
     
     static bool _publishNotificationHandler( void * target, 
 				void * ref, IOService * newService );
-
+                                
 protected:
 
 /*! @function free
@@ -343,12 +365,9 @@ public:
 
     virtual OSNumber * newVersionNumber() const;
 
-/*! 
-    *** THIS HAS BEEN DEPRECATED.  PLEASE USE newSerialNumberString ***
-
-    @function newSerialNumber
-    @abstract Returns a number object that describes the serial number
-    of the HID device.
+//  *** THIS HAS BEEN DEPRECATED.  PLEASE USE newSerialNumberString ***
+/*! @function newSerialNumber
+    @abstract THIS HAS BEEN DEPRECATED.  PLEASE USE newSerialNumberString.
     @result A number object. The caller must decrement the retain count
     on the object returned. */
 
@@ -594,8 +613,15 @@ public:
                                 IOOptionBits         options,
                                 UInt32               completionTimeout,
                                 IOHIDCompletion	*    completion = 0);    
+
+/*! @function newVendorIDSourceNumber
+    @abstract Returns a number object that describes the vendor ID
+    source of the HID device.  
+    @result A number object. The caller must decrement the retain count
+    on the object returned. */
+    OSMetaClassDeclareReservedUsed(IOHIDDevice,  6);
+    virtual OSNumber * newVendorIDSourceNumber() const;
     
-    OSMetaClassDeclareReservedUnused(IOHIDDevice,  6);
     OSMetaClassDeclareReservedUnused(IOHIDDevice,  7);
     OSMetaClassDeclareReservedUnused(IOHIDDevice,  8);
     OSMetaClassDeclareReservedUnused(IOHIDDevice,  9);

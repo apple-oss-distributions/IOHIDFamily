@@ -1,21 +1,22 @@
 /*
- * Copyright (c) 1998-2000 Apple Computer, Inc. All rights reserved.
- *
  * @APPLE_LICENSE_HEADER_START@
  * 
- * The contents of this file constitute Original Code as defined in and
- * are subject to the Apple Public Source License Version 1.1 (the
- * "License").  You may not use this file except in compliance with the
- * License.  Please obtain a copy of the License at
- * http://www.apple.com/publicsource and read it before using this file.
+ * Copyright (c) 1999-2003 Apple Computer, Inc.  All Rights Reserved.
  * 
- * This Original Code and all software distributed under the License are
- * distributed on an "AS IS" basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+ * This file contains Original Code and/or Modifications of Original Code
+ * as defined in and that are subject to the Apple Public Source License
+ * Version 2.0 (the 'License'). You may not use this file except in
+ * compliance with the License. Please obtain a copy of the License at
+ * http://www.opensource.apple.com/apsl/ and read it before using this
+ * file.
+ * 
+ * The Original Code and all software distributed under the License are
+ * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
  * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
  * INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE OR NON-INFRINGEMENT.  Please see the
- * License for the specific language governing rights and limitations
- * under the License.
+ * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
+ * Please see the License for the specific language governing rights and
+ * limitations under the License.
  * 
  * @APPLE_LICENSE_HEADER_END@
  */
@@ -32,6 +33,78 @@
 #include "IOHIDSystem.h"
 #include "IOHIDKeyboardDevice.h"
 
+//************************************************************************
+// KeyboardReserved
+//
+// RY: The following was added because the IOHIKeyboard class doesn't have
+// a reserved field defined.  Essentially what this does is create a
+// static dictionary that stores OSData objects for each keyboard.  These
+// OSData objects will be added and removed as each keyboard enters and
+// leaves the system.
+
+struct KeyboardReserved
+{
+	thread_call_t		repeat_thread_call;
+        bool			dispatchEventCalled;
+        bool			isSeized;
+        IOService *		openClient;
+        IOHIDKeyboardDevice *	keyboardNub;
+};
+
+static OSDictionary *gKeyboardReservedDictionary = OSDictionary::withCapacity(4);
+
+static OSSymbol * GetKeyForService(OSObject * newService)
+{
+    char key[9];        
+    sprintf(key, "%x", (UInt32)newService);    
+    return OSSymbol::withCString(key);
+}
+
+static KeyboardReserved * GetKeyboardReservedStructEventForService(OSObject *service)
+{
+    KeyboardReserved 	* retVal 	= 0;
+    OSSymbol 		* key 		= 0;
+    OSData 		* data 		= 0;
+    
+    if (gKeyboardReservedDictionary && (key = GetKeyForService(service)))
+    {
+        if (data = gKeyboardReservedDictionary->getObject(key))
+        {
+            retVal = (KeyboardReserved *)data->getBytesNoCopy();
+        }
+        key->release();
+    }
+    
+    return retVal;
+}
+
+static void AppendNewKeyboardReservedStructForService(OSObject *service)
+{
+    KeyboardReserved 	temp;
+    OSSymbol		* key		= 0;
+    OSData 		* data		= 0;
+    
+    if (gKeyboardReservedDictionary && (key = GetKeyForService(service)))
+    {
+        bzero(&temp, sizeof(KeyboardReserved));
+        data = OSData::withBytes(&temp, sizeof(KeyboardReserved));
+        gKeyboardReservedDictionary->setObject(key, data);
+        data->release();
+        key->release();
+    }
+}
+
+static void RemoveKeyboardReservedStructForService(OSObject *service)
+{
+    OSSymbol 	* key = 0;
+
+    if (gKeyboardReservedDictionary && (key = GetKeyForService(service)))
+    {
+    	gKeyboardReservedDictionary->removeObject(key);
+        key->release();
+    }
+}
+//************************************************************************
 
 #define super IOHIDevice
 OSDefineMetaClassAndStructors(IOHIKeyboard, IOHIDevice);
@@ -48,10 +121,25 @@ bool IOHIKeyboard::init(OSDictionary * properties)
   _keyMap       = 0;
   _keyStateSize = 4*((maxKeyCodes()+(EVK_BITS_PER_UNIT-1))/EVK_BITS_PER_UNIT);
   _keyState     = (UInt32 *) IOMalloc(_keyStateSize);
-
+  
+  _keyboardEventTarget        = 0;
+  _keyboardEventAction        = 0;
+  _keyboardSpecialEventTarget = 0;
+  _keyboardSpecialEventAction = 0;
+  _updateEventFlagsTarget     = 0;
+  _updateEventFlagsAction     = 0;
+  
   if (!_deviceLock || !_keyState)  return false;
 
   bzero(_keyState, _keyStateSize);
+  
+  AppendNewKeyboardReservedStructForService(this);
+  KeyboardReserved * tempReservedStruct = GetKeyboardReservedStructEventForService(this);
+
+  if (tempReservedStruct)
+  {
+    tempReservedStruct->repeat_thread_call = thread_call_allocate(_autoRepeat, this);
+  }
 
   return true;
 }
@@ -59,7 +147,7 @@ bool IOHIKeyboard::init(OSDictionary * properties)
 bool IOHIKeyboard::start(IOService * provider)
 {
   if (!super::start(provider))  return false;
-
+  
   /*
    * IOHIKeyboard serves both as a service and a nub (we lead a double
    * life).  Register ourselves as a nub to kick off matching.
@@ -68,6 +156,22 @@ bool IOHIKeyboard::start(IOService * provider)
   registerService();
 
   return true;
+}
+
+void IOHIKeyboard::stop(IOService * provider)
+{
+    KeyboardReserved *tempReservedStruct = GetKeyboardReservedStructEventForService(this);        
+    
+    if (tempReservedStruct) {
+        if (tempReservedStruct->keyboardNub) {
+                tempReservedStruct->keyboardNub->stop(this);
+                tempReservedStruct->keyboardNub->detach(this);
+                tempReservedStruct->keyboardNub->release();
+                tempReservedStruct->keyboardNub = 0;
+        }
+    }
+
+    super::stop(provider);
 }
 
 void IOHIKeyboard::free()
@@ -88,11 +192,21 @@ void IOHIKeyboard::free()
 
     if( _keyState )
         IOFree( _keyState, _keyStateSize);
+
+    KeyboardReserved *tempReservedStruct = GetKeyboardReservedStructEventForService(this);        
+    
+    if (tempReservedStruct) {
+        thread_call_free(tempReservedStruct->repeat_thread_call);
+        RemoveKeyboardReservedStructForService(this);
+    }
+    
+    // RY: MENTAL NOTE Do this last
     if ( lock )
     {
       IOLockUnlock( lock);
       IOLockFree( lock);
     }
+    
     super::free();
 }
 
@@ -113,33 +227,39 @@ bool IOHIKeyboard::updateProperties( void )
 IOReturn IOHIKeyboard::setParamProperties( OSDictionary * dict )
 {
     OSData *		data;
+    OSNumber *		number;
     IOReturn		err = kIOReturnSuccess, err2;
     unsigned char *	map;
     IOHIKeyboardMapper * oldMap;
     bool		updated = false;
     UInt64		nano;
+    UInt32		value;
 
     if( dict->getObject(kIOHIDResetKeyboardKey))
 		resetKeyboard();
 
     IOLockLock( _deviceLock);
 
-    if( (data = OSDynamicCast( OSData,
-		dict->getObject(kIOHIDKeyRepeatKey))))
-	{
+    if ((number = OSDynamicCast(OSNumber,
+                              dict->getObject(kIOHIDKeyRepeatKey))) ||
+        (data = OSDynamicCast(OSData,
+                              dict->getObject(kIOHIDKeyRepeatKey))))
+    {
+        nano = (number) ? number->unsigned64BitValue() : *((UInt64 *) (data->getBytesNoCopy()));
 
-        nano = *((UInt64 *)(data->getBytesNoCopy()));
         if( nano < EV_MINKEYREPEAT)
             nano = EV_MINKEYREPEAT;
         nanoseconds_to_absolutetime(nano, &_keyRepeat);
         updated = true;
     }
 
-    if( (data = OSDynamicCast( OSData,
-		dict->getObject(kIOHIDInitialKeyRepeatKey))))
-	{
+    if ((number = OSDynamicCast(OSNumber,
+                              dict->getObject(kIOHIDInitialKeyRepeatKey))) ||
+        (data = OSDynamicCast(OSData,
+                              dict->getObject(kIOHIDInitialKeyRepeatKey))))
+    {
+        nano = (number) ? number->unsigned64BitValue() : *((UInt64 *) (data->getBytesNoCopy()));
 
-        nano = *((UInt64 *)(data->getBytesNoCopy()));
         if( nano < EV_MINKEYREPEAT)
             nano = EV_MINKEYREPEAT;
         nanoseconds_to_absolutetime(nano, &_initialKeyRepeat);
@@ -218,6 +338,32 @@ bool IOHIKeyboard::resetKeyboard()
     }
 
     updateProperties();
+    
+    if (getProperty("HIDKeyboardKeysDefined"))
+    {
+        IOHIDKeyboardDevice * hidKeyboardNub = 0;
+        KeyboardReserved *tempReservedStruct = GetKeyboardReservedStructEventForService(this);     
+        
+        if (tempReservedStruct) {            
+            hidKeyboardNub = tempReservedStruct->keyboardNub;
+            
+            if (!hidKeyboardNub)
+            {
+                hidKeyboardNub = IOHIDKeyboardDevice::newKeyboardDevice(this);
+                                    
+                if (hidKeyboardNub &&
+                    (!hidKeyboardNub->attach(this) || 
+                    !hidKeyboardNub->start(this)))
+                {
+                    hidKeyboardNub->release();
+                    hidKeyboardNub = 0;
+                }
+                tempReservedStruct->keyboardNub = hidKeyboardNub;
+            }
+
+        }
+    }
+
 
     _interfaceType = interfaceID();
     _deviceType    = deviceType();
@@ -233,16 +379,22 @@ void IOHIKeyboard::scheduleAutoRepeat()
 // Preconditions:
 // *	_deviceLock should be held on entry
 {
+    KeyboardReserved *tempReservedStruct = GetKeyboardReservedStructEventForService(this); 
+          
     if ( _calloutPending == true )
-    {
-        thread_call_func_cancel(_autoRepeat, this, true);
+    {        
+        if (tempReservedStruct) {
+            thread_call_cancel(tempReservedStruct->repeat_thread_call);
+        }
 	_calloutPending = false;
     }
     if ( AbsoluteTime_to_scalar(&_downRepeatTime) )
     {
         AbsoluteTime deadline;
         clock_absolutetime_interval_to_deadline(_downRepeatTime, &deadline);
-        thread_call_func_delayed(_autoRepeat, this, deadline);
+        if (tempReservedStruct) {
+            thread_call_enter_delayed(tempReservedStruct->repeat_thread_call, deadline);
+        }
 	_calloutPending = true;
     }
 }
@@ -261,14 +413,19 @@ void IOHIKeyboard::autoRepeat()
 // *	Should only be executed on callout thread
 // *	_deviceLock should be unlocked on entry.
 {    
+    KeyboardReserved *tempReservedStruct = GetKeyboardReservedStructEventForService(this); 
+
     IOLockLock( _deviceLock);
-    if ( _calloutPending == false )
+    if (( _calloutPending == false ) || 
+        ((tempReservedStruct) && tempReservedStruct->dispatchEventCalled ))
     {
 	IOLockUnlock( _deviceLock);
 	return;
     }
     _calloutPending = false;
     _isRepeat = true;
+
+    if (tempReservedStruct) tempReservedStruct->dispatchEventCalled = true;
 
     if ( AbsoluteTime_to_scalar(&_downRepeatTime) )
     {
@@ -278,6 +435,8 @@ void IOHIKeyboard::autoRepeat()
                                 /* keyBits */   _keyState);
 	_downRepeatTime = _keyRepeat;
     }
+
+    if (tempReservedStruct) tempReservedStruct->dispatchEventCalled = false;
 
     _isRepeat = false;
     scheduleAutoRepeat();
@@ -331,27 +490,39 @@ void IOHIKeyboard::keyboardEvent(unsigned eventType,
 //		will be called while the KeyMap object is processing
 //		the key code we've sent it using deliverKey.
 {
-
-    if (_keyboardEventAction)     /* upstream call */ 
+    KeyboardReserved *tempReservedStruct = GetKeyboardReservedStructEventForService(this); 
+    
+    if (tempReservedStruct && tempReservedStruct->dispatchEventCalled) 
     {
-      (*_keyboardEventAction)(_keyboardEventTarget,
-                              eventType,
-       /* flags */            flags,
-       /* keyCode */          keyCode,
-       /* charCode */         charCode,
-       /* charSet */          charSet,
-       /* originalCharCode */ origCharCode,
-       /* originalCharSet */  origCharSet,
-       /* keyboardType */     _deviceType,
-       /* repeat */           _isRepeat,
-       /* atTime */           _lastEventTime);
+        IOLockUnlock(_deviceLock);
+    }
+
+    _keyboardEvent(	   this,
+                           eventType,
+    /* flags */            flags,
+    /* keyCode */          keyCode,
+    /* charCode */         charCode,
+    /* charSet */          charSet,
+    /* originalCharCode */ origCharCode,
+    /* originalCharSet */  origCharSet,
+    /* keyboardType */     _deviceType,
+    /* repeat */           _isRepeat,
+    /* atTime */           _lastEventTime);
+
+    if (tempReservedStruct && tempReservedStruct->dispatchEventCalled) 
+    {
+        IOLockLock(_deviceLock);
     }
 
 
     if( keyCode == _keyMap->getParsedSpecialKey(NX_KEYTYPE_CAPS_LOCK) ||
-		keyCode == _keyMap->getParsedSpecialKey(NX_POWER_KEY) ||
-		keyCode == _keyMap->getParsedSpecialKey(NX_KEYTYPE_EJECT) ||
-		keyCode == _keyMap->getParsedSpecialKey(NX_KEYTYPE_VIDMIRROR))  
+        keyCode == _keyMap->getParsedSpecialKey(NX_KEYTYPE_NUM_LOCK) ||
+        keyCode == _keyMap->getParsedSpecialKey(NX_POWER_KEY) ||
+        keyCode == _keyMap->getParsedSpecialKey(NX_KEYTYPE_MUTE) ||
+        keyCode == _keyMap->getParsedSpecialKey(NX_KEYTYPE_PLAY) ||
+        keyCode == _keyMap->getParsedSpecialKey(NX_KEYTYPE_EJECT) ||
+        keyCode == _keyMap->getParsedSpecialKey(NX_KEYTYPE_VIDMIRROR) ||
+        keyCode == _keyMap->getParsedSpecialKey(NX_KEYTYPE_ILLUMINATION_TOGGLE))  
     {		
 		//Don't repeat caps lock on ADB/USB.  0x39 is default ADB code.
 		//    We are here because KeyCaps needs to see 0x39 as a real key,
@@ -373,39 +544,63 @@ void IOHIKeyboard::keyboardSpecialEvent(unsigned eventType,
 	/* specialty */                 unsigned flavor)
 // Description: See the description for keyboardEvent.
 {
+    KeyboardReserved *tempReservedStruct = GetKeyboardReservedStructEventForService(this); 
 
-    if (_keyboardSpecialEventAction)         /* upstream call */
+    if (tempReservedStruct && tempReservedStruct->dispatchEventCalled) 
     {
-      (*_keyboardSpecialEventAction)(_keyboardSpecialEventTarget,
-                                        eventType,
-                     /* flags */        flags,
-                     /* keyCode */      keyCode,
-                     /* specialty */    flavor,
-                     /* guid */ 	_guid,
-                     /* repeat */       _isRepeat,
-                     /* atTime */       _lastEventTime);
+        IOLockUnlock(_deviceLock);
+    }
+
+    _keyboardSpecialEvent(this,
+                        eventType,
+        /* flags */	flags,
+        /* keyCode */	keyCode,
+        /* specialty */	flavor,
+        /* guid */ 	_guid,
+        /* repeat */	_isRepeat,
+        /* atTime */	_lastEventTime);
+                    
+    if (tempReservedStruct && tempReservedStruct->dispatchEventCalled) 
+    {
+        IOLockLock(_deviceLock);
     }
 
     // Set up key repeat operations here.
- 
-	//	Don't repeat caps lock, numlock or power key.
-	//
-	if ( (flavor != NX_KEYTYPE_CAPS_LOCK) && (flavor != NX_KEYTYPE_NUM_LOCK) &&
-		 (flavor != NX_POWER_KEY) && (flavor != NX_KEYTYPE_EJECT) &&
-		 (flavor != NX_KEYTYPE_VIDMIRROR))
-	{
-		setRepeat(eventType, keyCode);
-	}
+    // Don't repeat capslock, numlock, power key, mute key, play key, 
+    // eject key, vidmirror key, illumination toggle key.
+    if( keyCode == _keyMap->getParsedSpecialKey(NX_KEYTYPE_CAPS_LOCK) ||
+        keyCode == _keyMap->getParsedSpecialKey(NX_KEYTYPE_NUM_LOCK) ||
+        keyCode == _keyMap->getParsedSpecialKey(NX_POWER_KEY) ||
+        keyCode == _keyMap->getParsedSpecialKey(NX_KEYTYPE_MUTE) ||
+        keyCode == _keyMap->getParsedSpecialKey(NX_KEYTYPE_PLAY) ||
+        keyCode == _keyMap->getParsedSpecialKey(NX_KEYTYPE_EJECT) ||
+        keyCode == _keyMap->getParsedSpecialKey(NX_KEYTYPE_VIDMIRROR) ||
+        keyCode == _keyMap->getParsedSpecialKey(NX_KEYTYPE_ILLUMINATION_TOGGLE))  
+    {
+        return;
+    }
+
+    // Set up key repeat operations here.
+    setRepeat(eventType, keyCode);
 }
 
 void IOHIKeyboard::updateEventFlags(unsigned flags)
 // Description:	Process non-event-generating flag changes. Simply pass this
 //		along to our owner.
 {
-  if (_updateEventFlagsAction)              /* upstream call */
-  {
-    (*_updateEventFlagsAction)(_updateEventFlagsTarget, flags);
-  }
+    KeyboardReserved *tempReservedStruct = GetKeyboardReservedStructEventForService(this); 
+
+    if (tempReservedStruct && tempReservedStruct->dispatchEventCalled) 
+    {
+        IOLockUnlock(_deviceLock);
+    }
+
+    _updateEventFlags(this, flags);
+                    
+    if (tempReservedStruct && tempReservedStruct->dispatchEventCalled) 
+    {
+        IOLockLock(_deviceLock);
+    }
 }
 
 unsigned IOHIKeyboard::eventFlags()
@@ -426,7 +621,15 @@ void IOHIKeyboard::setDeviceFlags(unsigned flags)
 // Description: Set device event flags. In this world, there is only
 //		one keyboard device so device flags == global flags.
 {
-    _eventFlags = flags;
+    if (_eventFlags != flags) {
+        _eventFlags = flags;
+        
+        // RY: On Modifier change, we should 
+        // reset the auto repeat timer
+        AbsoluteTime_to_scalar(&_downRepeatTime) = 0;
+        _codeToRepeat = (unsigned)-1;
+        scheduleAutoRepeat();
+    }
 }
 
 bool IOHIKeyboard::alphaLock()
@@ -442,6 +645,12 @@ void IOHIKeyboard::setAlphaLock(bool val)
 {
     _alphaLock = val;
     setAlphaLockFeedback(val);
+
+    KeyboardReserved *tempReservedStruct = GetKeyboardReservedStructEventForService(this); 
+	
+    if (tempReservedStruct && tempReservedStruct->keyboardNub )
+        tempReservedStruct->keyboardNub->setCapsLockLEDElement(val);
+    
 }
 
 bool IOHIKeyboard::numLock()
@@ -452,7 +661,9 @@ bool IOHIKeyboard::numLock()
 void IOHIKeyboard::setNumLock(bool val)
 {
     _numLock = val;
-    setNumLockFeedback(val);
+    // RY: Since the num lock buttons, acts
+    // as clear, don't toggle the light
+    //setNumLockFeedback(val);
 }
 
 bool IOHIKeyboard::charKeyActive()
@@ -481,17 +692,38 @@ void IOHIKeyboard::dispatchKeyboardEvent(unsigned int keyCode,
 //		The event structure passed in by reference should not be freed.
 {
     IOHIKeyboardMapper	* theKeyMap;
+    KeyboardReserved *tempReservedStruct = GetKeyboardReservedStructEventForService(this); 
 	
-	_lastEventTime = time;
-
     IOLockLock( _deviceLock);
+
+    _lastEventTime = time;
+
+    // Post the event to the HID Manager
+    if (tempReservedStruct)
+    {
+        if (tempReservedStruct->keyboardNub )
+        {
+            tempReservedStruct->keyboardNub->postKeyboardEvent(keyCode, goingDown);
+        }
+        
+        if (tempReservedStruct->isSeized)
+        {
+            IOLockUnlock( _deviceLock);
+            return;
+        }
+    }
+
+
+    if (tempReservedStruct) tempReservedStruct->dispatchEventCalled = true;
 
     if (_keyMap)  _keyMap->translateKeyCode(keyCode,
 			  /* direction */ goingDown,
 			  /* keyBits */   _keyState);
 			  
-	// remember the keymap while we hold the lock
-	theKeyMap = _keyMap;
+    // remember the keymap while we hold the lock
+    theKeyMap = _keyMap;
+
+    if (tempReservedStruct) tempReservedStruct->dispatchEventCalled = false;
 	
     IOLockUnlock( _deviceLock);
 	
@@ -539,46 +771,93 @@ unsigned IOHIKeyboard:: getLEDStatus ()
 }
 
 
-bool IOHIKeyboard::open(IOService *					client,
-						IOOptionBits		  		options,
-                        KeyboardEventAction			keAction,
+bool IOHIKeyboard::open(IOService *			client,
+                        IOOptionBits		  	options,
+                        KeyboardEventAction		keAction,
                         KeyboardSpecialEventAction	kseAction,
                         UpdateEventFlagsAction		uefAction)
 {
-  if ( (!_keyMap) && (!resetKeyboard()))  return false;
+    if ( (!_keyMap) && (!resetKeyboard()))  return false;
 
-  if (super::open(client, options))
-  {
-	// point the new keymap to the IOHIDSystem, so it can set properties in it
-	// this handles the case where although resetKeyboard is called above,
-	// _keyboardEventTarget is as yet unset, so zero is passed
+    if (client == this) {
+        KeyboardReserved *tempReservedStruct;
+        tempReservedStruct = GetKeyboardReservedStructEventForService(this);
+        
+        return super::open((tempReservedStruct) ? tempReservedStruct->openClient : 0, options);
+    }
+
+    return open(client, 
+                options,
+                0,
+                (KeyboardEventCallback)keAction, 
+                (KeyboardSpecialEventCallback)kseAction, 
+                (UpdateEventFlagsCallback)uefAction);
+}
+
+bool IOHIKeyboard::open(
+                    IOService *                  client,
+		    IOOptionBits	         options,
+		    void *			 /*refcon*/,
+                    KeyboardEventCallback        keCallback,
+                    KeyboardSpecialEventCallback kseCallback,
+                    UpdateEventFlagsCallback     uefCallback)
+{
+    if (client == this) return true;
+        
+    KeyboardReserved *tempReservedStruct;
+    tempReservedStruct = GetKeyboardReservedStructEventForService(this);
+    
+    if (tempReservedStruct) tempReservedStruct->openClient = client;
+
+    bool returnValue = open(this, options, 
+                        (KeyboardEventAction)_keyboardEvent, 
+                        (KeyboardSpecialEventAction)_keyboardSpecialEvent, 
+                        (UpdateEventFlagsAction)_updateEventFlags);
+                        
+    if (!returnValue)
+        return false;
+    
+    // point the new keymap to the IOHIDSystem, so it can set properties in it
+    // this handles the case where although resetKeyboard is called above,
+    // _keyboardEventTarget is as yet unset, so zero is passed
     if (_keyMap)               
         _keyMap->setKeyboardTarget(client);
-
+    
     // Note: client object is already retained by superclass' open()
     _keyboardEventTarget        = client;
-    _keyboardEventAction        = keAction;
+    _keyboardEventAction        = (KeyboardEventAction)keCallback;
     _keyboardSpecialEventTarget = client;
-    _keyboardSpecialEventAction = kseAction;
+    _keyboardSpecialEventAction = (KeyboardSpecialEventAction)kseCallback;
     _updateEventFlagsTarget     = client;
-    _updateEventFlagsAction     = uefAction;
-
+    _updateEventFlagsAction     = (UpdateEventFlagsAction)uefCallback;
+    
     return true;
-  }
-
-  return false;
 }
 
 void IOHIKeyboard::close(IOService * client, IOOptionBits)
 {
     // kill autorepeat task
-    AbsoluteTime_to_scalar(&_downRepeatTime) = 0;
-    _codeToRepeat = (unsigned)-1;
-    scheduleAutoRepeat();
+    if (_codeToRepeat != -1)
+    {
+        AbsoluteTime ts;
+        clock_get_uptime(&ts);
+        dispatchKeyboardEvent(_codeToRepeat, false, ts);
+    }
     // clear modifiers to avoid stuck keys
     setAlphaLock(false);
-    if (_updateEventFlagsAction)
-        (*_updateEventFlagsAction)(_updateEventFlagsTarget, 0); 	_eventFlags = 0;
+
+    _updateEventFlags(this, 0);
+    _eventFlags = 0;
+
+    _keyboardSpecialEvent(  this, 
+                            NX_SYSDEFINED, 
+                            _eventFlags, 
+                            NX_NOSPECIALKEY, 
+                            NX_SUBTYPE_STICKYKEYS_RELEASE, 
+                            _guid, 
+                            0, 
+                            _lastEventTime);
+
     bzero(_keyState, _keyStateSize);
 
     _keyboardEventAction        = NULL;
@@ -587,7 +866,7 @@ void IOHIKeyboard::close(IOService * client, IOOptionBits)
     _keyboardSpecialEventTarget = 0;
     _updateEventFlagsAction     = NULL;
     _updateEventFlagsTarget     = 0;
-
+    
     super::close(client);
 }
 
@@ -602,6 +881,18 @@ IOReturn IOHIKeyboard::message( UInt32 type, IOService * provider,
             if (_keyMap)
                 ret = _keyMap->message(type, this);
             break;
+            
+        case kIOHIDSystemDeviceSeizeRequestMessage:
+            if (OSDynamicCast(IOHIDDevice, provider))
+            {
+                KeyboardReserved *tempReservedStruct = GetKeyboardReservedStructEventForService(this);        
+                
+                if (tempReservedStruct) {
+                    tempReservedStruct->isSeized = (bool)argument;
+                }
+            }
+            break;
+         
         default:
             ret = super::message(type, provider, argument);
             break;
@@ -609,3 +900,81 @@ IOReturn IOHIKeyboard::message( UInt32 type, IOService * provider,
     
     return ret;
 }
+
+void IOHIKeyboard::_keyboardEvent( IOHIKeyboard * self,
+			     unsigned   eventType,
+      /* flags */            unsigned   flags,
+      /* keyCode */          unsigned   key,
+      /* charCode */         unsigned   charCode,
+      /* charSet */          unsigned   charSet,
+      /* originalCharCode */ unsigned   origCharCode,
+      /* originalCharSet */  unsigned   origCharSet,
+      /* keyboardType */     unsigned   keyboardType,
+      /* repeat */           bool       repeat,
+      /* atTime */           AbsoluteTime ts)
+{
+    KeyboardEventCallback	keCallback;
+    keCallback = (KeyboardEventCallback)self->_keyboardEventAction;
+    
+    if ( !keCallback )
+        return;
+        
+    (*keCallback)(  self->_keyboardEventTarget,
+                    eventType,
+                    flags,
+                    key,
+                    charCode,
+                    charSet,
+                    origCharCode,
+                    origCharSet,
+                    keyboardType,
+                    repeat,
+                    ts,
+                    self,
+                    0);
+}
+
+void IOHIKeyboard::_keyboardSpecialEvent( 	
+                             IOHIKeyboard * self,
+                             unsigned   eventType,
+        /* flags */          unsigned   flags,
+        /* keyCode  */       unsigned   key,
+        /* specialty */      unsigned   flavor,
+        /* guid */           UInt64     guid,
+        /* repeat */         bool       repeat,
+        /* atTime */         AbsoluteTime ts)
+{
+    KeyboardSpecialEventCallback kseCallback;
+    kseCallback = (KeyboardSpecialEventCallback)self->_keyboardSpecialEventAction;
+    
+    if ( !kseCallback )
+        return;
+        
+    (*kseCallback)( self->_keyboardEventTarget,
+                    eventType,
+                    flags,
+                    key,
+                    flavor,
+                    guid,
+                    repeat,
+                    ts,
+                    self,
+                    0);
+}
+        
+void IOHIKeyboard::_updateEventFlags( IOHIKeyboard * self,
+				unsigned flags)
+{
+    UpdateEventFlagsCallback uefCallback;
+    uefCallback = (UpdateEventFlagsCallback)self->_updateEventFlagsAction;
+    
+    if ( !uefCallback )
+        return;
+        
+    (*uefCallback)( self->_updateEventFlagsTarget,
+                    flags,
+                    self,
+                    0);
+}
+
+

@@ -22,46 +22,46 @@
  * @APPLE_LICENSE_HEADER_END@
  */
 
-#ifndef _IOKIT_HID_IOHIDKEYBOARDDEVICE_H
-#define _IOKIT_HID_IOHIDKEYBOARDDEVICE_H
+#ifndef _IOKIT_HID_IOHIDDEVICESHIM_H
+#define _IOKIT_HID_IOHIDDEVICESHIM_H
 
-#include "IOHIDDeviceShim.h"
-#include "IOHIKeyboard.h"
+#include "IOHIDDevice.h"
+#include "IOHIDevice.h"
 
-class IOHIDKeyboardDevice : public IOHIDDeviceShim
+#define kIOHIDAppleVendorID 1452
+typedef enum IOHIDTransport {
+    kIOHIDTransportUSB = 1,
+    kIOHIDTransportADB,
+    kIOHIDTransportPS2
+} IOHIDTransport;
+
+class IOHIDDeviceShim : public IOHIDDevice
 {
-    OSDeclareDefaultStructors( IOHIDKeyboardDevice )
+    OSDeclareDefaultStructors( IOHIDDeviceShim )
 
 private:
-    IOBufferMemoryDescriptor *	_report;
-    IOHIKeyboard *		_provider;
-    
-    UInt8			_cachedLEDState;
-    UInt8 			_adb2usb[0x80];
-    
-    bool			_pmuControlledLED;
+    IOService *			_device;
+    IOHIDevice *		_hiDevice;
+    IOHIDTransport		_transport;
 
 protected:
 
-    virtual void free();
     virtual bool handleStart( IOService * provider );
     
 public:
-    static IOHIDKeyboardDevice	* newKeyboardDevice(IOService * owner);
-    
-    virtual bool init( OSDictionary * dictionary = 0 );
-
     virtual IOReturn newReportDescriptor(
-                        IOMemoryDescriptor ** descriptor ) const;
-                        
-    virtual IOReturn setReport( IOMemoryDescriptor * report,
-                                IOHIDReportType      reportType,
-                                IOOptionBits         options );
-                                                                
-    virtual void postKeyboardEvent(UInt8 key, bool keyDown);
+                        IOMemoryDescriptor ** descriptor ) const = 0;
+    virtual bool init( OSDictionary * dictionary = 0 );
     
-    virtual void setCapsLockLEDElement(bool state);
-    virtual void setNumLockLEDElement(bool state);
+    virtual IOHIDTransport transport() {return _transport;};
+    
+    virtual OSString * newTransportString() const;
+    virtual OSString * newProductString() const;
+    virtual OSString * newManufacturerString() const;
+    virtual OSNumber * newVendorIDNumber() const;
+    virtual OSNumber * newProductIDNumber() const;
+    virtual OSNumber * newLocationIDNumber() const;
+    virtual OSString * newSerialNumberString() const;
 };
 
-#endif /* !_IOKIT_HID_IOHIDKEYBOARDDEVICE_H */
+#endif /* !_IOKIT_HID_IOHIDDEVICESHIM_H */
