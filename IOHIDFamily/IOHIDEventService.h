@@ -229,8 +229,12 @@ public:
     virtual bool            start( IOService * provider );
     
     virtual void            stop( IOService * provider );
+
+    virtual bool            matchPropertyTable(OSDictionary * table, SInt32 * score);    
     
     virtual IOReturn        setSystemProperties( OSDictionary * properties );
+    
+    virtual IOReturn        setProperties( OSObject * properties );
     
     OSMetaClassDeclareReservedUnused(IOHIDEventService,  0);
     OSMetaClassDeclareReservedUnused(IOHIDEventService,  1);

@@ -35,6 +35,7 @@
 #include "IOHIDPointing.h"
 #include "IOHIDKeyboard.h"
 #include "IOHIDConsumer.h"
+#include "IOHIDFamilyPrivate.h"
 
 enum {
     kBootProtocolNone   = 0,
@@ -89,41 +90,31 @@ bool IOHIDEventService::init ( OSDictionary * properties )
 //====================================================================================================
 bool IOHIDEventService::start ( IOService * provider )
 {
-    UInt32      bootProtocol    = 0;
-
+    UInt32          bootProtocol        = 0;
+    
     if ( !super::start(provider) )
         return false;
-		
-    if ( provider )
-    {
-        IOService * service = provider->getProvider();
-        
-        while (service = service->getProvider())
-        {
-            if(service->metaCast("IOHIDevice"))
-            {
-                return false;
-            }
-            else if (service->metaCast("IOHIDDevice"))
-                return false;
-        }
-
-        OSNumber *  number = (OSNumber *)provider->getProperty("BootProtocol");
-        
-        if (number) 
-            bootProtocol = number->unsigned32BitValue();
-
-    }
-
+    
     if ( !handleStart(provider) )
         return false;
-            
+        
     setProperty(kIOHIDTransportKey, getTransport());
-    setProperty(kIOHIDVendorIDKey, getVendorID(), 32);
-    setProperty(kIOHIDProductIDKey, getProductID(), 32);
     setProperty(kIOHIDLocationIDKey, getLocationID(), 32);
+    setProperty(kIOHIDVendorIDKey, getVendorID(), 32);
+    setProperty(kIOHIDVendorIDSourceKey, getVendorIDSource(), 32);
+    setProperty(kIOHIDProductIDKey, getProductID(), 32);
+    setProperty(kIOHIDVersionNumberKey, getVersion(), 32);
+    setProperty(kIOHIDCountryCodeKey, getCountryCode(), 32);
+    setProperty(kIOHIDManufacturerKey, getManufacturer());
+    setProperty(kIOHIDProductKey, getProduct());
+    setProperty(kIOHIDSerialNumberKey, getSerialNumber());
 
-    parseSupportedElements ( getReportElements(), bootProtocol );
+    OSNumber *  number = OSDynamicCast(OSNumber, getProperty("BootProtocol"));
+    
+    if (number) 
+        bootProtocol = number->unsigned32BitValue();
+
+    parseSupportedElements (getReportElements(), bootProtocol);
     
     if ((!_consumerNub && _keyboardNub) || (!_keyboardNub && _consumerNub))
     {
@@ -208,6 +199,18 @@ void IOHIDEventService::stop( IOService * provider )
 }
 
 //====================================================================================================
+// IOHIDEventService::matchPropertyTable
+//====================================================================================================
+bool IOHIDEventService::matchPropertyTable(OSDictionary * table, SInt32 * score)
+{
+    // Ask our superclass' opinion.
+    if (super::matchPropertyTable(table, score) == false)  
+        return false;
+
+    return MatchPropertyTable(this, table, score);
+}
+
+//====================================================================================================
 // IOHIDEventService::_publishNotificationHandler
 //====================================================================================================
 bool IOHIDEventService::_publishNotificationHandler(
@@ -276,8 +279,32 @@ bool IOHIDEventService::_publishNotificationHandler(
 //====================================================================================================
 IOReturn IOHIDEventService::setSystemProperties( OSDictionary * properties )
 {
+    if ( _keyboardNub )
+        _keyboardNub->setParamProperties(properties);
+        
+    if ( _pointingNub )
+        _pointingNub->setParamProperties(properties);
+        
+    if ( _consumerNub )
+        _consumerNub->setParamProperties(properties);
+        
     return kIOReturnSuccess;
 }
+
+//====================================================================================================
+// IOHIDEventService::setSystemProperties
+//====================================================================================================
+IOReturn IOHIDEventService::setProperties( OSObject * properties )
+{
+    OSDictionary *  propertyDict    = OSDynamicCast(OSDictionary, properties);
+    IOReturn        ret             = kIOReturnBadArgument;
+    
+    if ( propertyDict )
+        ret = setSystemProperties(propertyDict);
+    
+    return ret;
+}
+
 
 //====================================================================================================
 // IOHIDEventService::parseSupportedElements
@@ -291,6 +318,7 @@ void IOHIDEventService::parseSupportedElements ( OSArray * elementArray, UInt32 
     UInt32              supportedModifiers  = 0;
     UInt32              buttonCount         = 0;
     IOHIDElement *      element             = 0;
+    OSArray *           functions           = 0;
     IOFixed             pointingResolution  = 0;
     IOFixed             scrollResolution    = 0;
     bool                pointingDevice      = false;
@@ -308,7 +336,7 @@ void IOHIDEventService::parseSupportedElements ( OSArray * elementArray, UInt32 
     }
     
     if ( elementArray )
-    {
+    {        
         count = elementArray->getCount();
         
         for ( index = 0; index < count; index++ )
@@ -419,7 +447,47 @@ void IOHIDEventService::parseSupportedElements ( OSArray * elementArray, UInt32 
                     }
                     break;
             }
+            
+            // Cache device functions
+            if ((element->getType() == kIOHIDElementTypeCollection) &&
+                ((element->getCollectionType() == kIOHIDElementCollectionTypeApplication) ||
+                (element->getCollectionType() == kIOHIDElementCollectionTypePhysical)))
+            {
+                OSNumber * usagePageRef, * usageRef;
+                OSDictionary * pairRef;
+                
+                if(!functions) functions = OSArray::withCapacity(2);
+                
+                pairRef     = OSDictionary::withCapacity(2);
+                usageRef    = OSNumber::withNumber(usage, 32);
+                usagePageRef= OSNumber::withNumber(usagePage, 32);
+                
+                pairRef->setObject(kIOHIDDeviceUsageKey, usageRef);
+                pairRef->setObject(kIOHIDDeviceUsagePageKey, usagePageRef);
+                
+                UInt32 	pairCount = functions->getCount();
+                bool 	found = false;
+                for(unsigned i=0; i<pairCount; i++)
+                {
+                    OSDictionary *tempPair = (OSDictionary *)functions->getObject(i);
+                    
+                    if (found = tempPair->isEqualTo(pairRef))
+                        break;
+                }
+                
+                if (!found) 
+                {
+                    functions->setObject(functions->getCount(), pairRef);                
+                }
+                
+                pairRef->release();
+                usageRef->release();
+                usagePageRef->release();
+            }
         }
+        
+        setProperty(kIOHIDDeviceUsagePairsKey, functions);
+        if (functions) functions->release();
     }
     
     processTransducerData();
@@ -435,7 +503,7 @@ void IOHIDEventService::parseSupportedElements ( OSArray * elementArray, UInt32 
     if ( consumerDevice )
     {
 		_consumerNub = newConsumerShim(kShimEventProcessor);
-    }
+    }    
 }
 
 //====================================================================================================

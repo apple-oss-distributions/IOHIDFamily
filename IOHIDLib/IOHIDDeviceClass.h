@@ -126,11 +126,11 @@ protected:
                                 
     void convertByteToWord( const UInt8 * src,
                         UInt32 *      dst,
-                        UInt32        bitsToCopy);
+                        UInt32        bytesToCopy);
     
     void convertWordToByte( const UInt32 * src,
                         UInt8 *        dst,
-                        UInt32         bitsToCopy);
+                        UInt32         bytesToCopy);
                         
 	IOReturn finishAsyncPortSetup();
 	IOReturn finishReportHandlerQueueSetup();
