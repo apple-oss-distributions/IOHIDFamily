@@ -37,9 +37,16 @@
 // the code from IOUserClient.cpp: is_io_connect_map_memory,
 // mapClientMemory and is_io_connect_unmap_memory
 enum IOHIDLibUserClientMemoryTypes {
-    IOHIDLibUserClientElementValuesType = 0
+    kIOHIDLibUserClientElementValuesType = 0
 };
 
+// port types: I did consider adding queue ports to this
+// as well, but i'm not comfty with sending object pointers
+// as a type.
+enum IOHIDLibUserClientPortTypes {
+    kIOHIDLibUserClientAsyncPortType = 0,
+    kIOHIDLibUserClientDeviceValidPortType
+};
 
 enum IOHIDLibUserClientAsyncCommandCodes {
     kIOHIDLibUserClientSetAsyncPort,   		// kIOUCScalarIScalarO, 0, 0
@@ -66,7 +73,7 @@ enum IOHIDLibUserClientCommandCodes {
     kIOHIDLibUserClientGetReportOOL,		// kIOUCStructIStructO, 
     kIOHIDLibUserClientSetReport,		// kIOUCScalarIScalarO, 2, 0xffffffff
     kIOHIDLibUserClientSetReportOOL,		// kIOUCStructIStructO,
-
+    kIOHIDLibUserClientDeviceIsValid,
     kIOHIDLibUserClientNumCommands
 };
 
@@ -105,6 +112,7 @@ struct IOHIDReportReq
 
 #include <mach/mach_types.h>
 #include <IOKit/IOUserClient.h>
+#include <IOKit/IOInterruptEventSource.h>
 
 class IOHIDDevice;
 class IOSyncer;
@@ -114,9 +122,24 @@ class IOCommandGate;
 struct HIDResults;
 #endif
 
+enum {
+    kHIDQueueStateEnable,
+    kHIDQueueStateDisable,
+    kHIDQueueStateClear
+};
+
 class IOHIDLibUserClient : public IOUserClient 
 {
     OSDeclareDefaultStructors(IOHIDLibUserClient)
+
+    bool resourceNotification(void *refCon, IOService *service);
+    void resourceNotificationGated();
+    
+    void setStateForQueues(UInt32 state, IOOptionBits options = 0);
+    
+    void setValid(bool state);
+    
+    IOReturn dispatchMessage(void* message);
 
 protected:
     static const IOExternalMethod
@@ -125,23 +148,33 @@ protected:
 		sAsyncMethods[kIOHIDLibUserClientNumAsyncCommands];
 
     IOHIDDevice *fNub;
+    IOWorkLoop *fWL;
     IOCommandGate *fGate;
+    IOInterruptEventSource * fResourceES;
     
     OSSet * fQueueSet;
 
+    UInt32 fPid;
     task_t fClient;
     mach_port_t fWakePort;
     mach_port_t fQueuePort;
+    mach_port_t fValidPort;
     
+    void * fValidMessage;
+
     bool fNubIsTerminated;
+	bool fNubIsKeyboard;
     
+    IONotifier * fResourceNotification;
+    UInt64 fCachedConsoleUsersSeed;
     IOOptionBits fCachedOptionBits;
+    bool    fValid;
+    UInt32 fGeneration;
     
     // Methods
     virtual bool initWithTask(task_t owningTask, void *security_id, UInt32 type);
     
     virtual IOReturn clientClose(void);
-    IOReturn clientCloseGated();
 
     virtual bool start(IOService *provider);
 
@@ -159,15 +192,23 @@ protected:
 
     // Open the IOHIDDevice
     virtual IOReturn open(void * flags);
-    IOReturn openGated(void * flags);
+    IOReturn openGated(IOOptionBits flags);
 
     // Close the IOHIDDevice
     virtual IOReturn close();
     IOReturn closeGated();
                    
-    virtual bool didTerminate(IOService *provider, IOOptionBits options, bool *defer);
+    virtual bool didTerminate( IOService * provider, IOOptionBits options, bool * defer );
         
     virtual void free();
+
+    virtual void cleanupGated();
+
+    virtual IOReturn message(UInt32 type, IOService * provider, void * argument = 0 );
+    virtual IOReturn messageGated(UInt32 type, IOService * provider, void * argument = 0 );
+
+    virtual IOReturn registerNotificationPort(mach_port_t port, UInt32 type, UInt32 refCon );
+    virtual IOReturn registerNotificationPortGated(mach_port_t port, UInt32 type, UInt32 refCon );
 
     // return the shared memory for type (called indirectly)
     virtual IOReturn clientMemoryForType(
@@ -178,6 +219,10 @@ protected:
                            UInt32                type,
                            IOOptionBits *        options,
                            IOMemoryDescriptor ** memory );
+
+    // Device Valid
+    virtual IOReturn deviceIsValid(void * vOutStatus, void * vOutGeneration);
+    IOReturn deviceIsValidGated(void * vOutStatus, void * vOutGeneration);
 
     // Create a queue
     virtual IOReturn createQueue(void * vInFlags, void * vInDepth, void * vOutQueue);

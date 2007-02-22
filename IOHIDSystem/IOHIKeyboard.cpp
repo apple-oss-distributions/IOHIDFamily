@@ -158,7 +158,7 @@ bool IOHIKeyboard::start(IOService * provider)
    * life).  Register ourselves as a nub to kick off matching.
    */
 
-  registerService();
+  registerService(kIOServiceSynchronous);
 
   return true;
 }

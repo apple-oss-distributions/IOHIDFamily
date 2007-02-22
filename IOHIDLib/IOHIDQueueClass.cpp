@@ -49,8 +49,10 @@ __END_DECLS
 	return kIOReturnNoDevice;	\
 } while (0)
 
-#define openCheck() do {	    \
-    if (!fIsCreated)		    \
+#define openCheck() do {            \
+    if (!fOwningDevice ||           \
+        !fOwningDevice->fIsOpen ||  \
+        !fIsCreated)                \
         return kIOReturnNotOpen;    \
 } while (0)
 
@@ -60,15 +62,9 @@ __END_DECLS
         return kIOReturnNotAttached;	\
 } while (0)    
 
-#define seizeCheck() do {               \
-    if ((!fOwningDevice) ||		\
-         (fOwningDevice->fIsSeized))    \
-        return kIOReturnExclusiveAccess;\
-} while (0)
-
 #define allChecks() do {		\
+    ownerCheck();           \
     connectCheck();			\
-    seizeCheck();			\
     openCheck();			\
     terminatedCheck();			\
 } while (0)
@@ -368,21 +364,11 @@ Boolean IOHIDQueueClass::hasElement (IOHIDElementCookie elementCookie)
 
 
 /* start/stop data delivery to a queue */
-IOReturn IOHIDQueueClass::start (bool deviceInitiated)
+IOReturn IOHIDQueueClass::start ()
 {
     IOReturn ret = kIOReturnSuccess;
     
-    if (deviceInitiated)
-    {
-        if (fIsStopped)
-            return kIOReturnError;
-            
-        deviceInitiatedChecks();
-    }
-    else 
-    {
-        allChecks();
-    }
+    allChecks();
     
     // if the queue size changes, we will need to dispose of the 
     // queue mapped memory
@@ -430,21 +416,11 @@ IOReturn IOHIDQueueClass::start (bool deviceInitiated)
     return kIOReturnSuccess;
 }
 
-IOReturn IOHIDQueueClass::stop (bool deviceInitiated)
+IOReturn IOHIDQueueClass::stop ()
 {
     IOReturn ret = kIOReturnSuccess;
 
-    if (deviceInitiated)
-    {
-        if (fIsStopped)
-            return ret;
-            
-        deviceInitiatedChecks();
-    }
-    else 
-    {
-        allChecks();
-    }
+    allChecks();
 
     //  kIOHIDLibUserClientStopQueue, kIOUCScalarIScalarO, 1, 0
     int args[6], i = 0;
@@ -455,8 +431,7 @@ IOReturn IOHIDQueueClass::stop (bool deviceInitiated)
     if (ret != kIOReturnSuccess)
         return ret;
         
-    if (!deviceInitiated)
-        fIsStopped = true;
+    fIsStopped = true;
         
     // еее TODO after we stop the queue, we should empty the queue here, in user space
     // (to be consistant with setting the head from user space)

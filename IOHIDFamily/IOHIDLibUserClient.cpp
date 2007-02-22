@@ -22,13 +22,17 @@
  * @APPLE_LICENSE_HEADER_END@
  */
 #include <sys/systm.h>
+#include <sys/proc.h>
+#include <kern/task.h>
+#include <mach/port.h>
+#include <mach/message.h>
 
 #include <IOKit/IOCommandGate.h>
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IOService.h>
 #include <IOKit/IOSyncer.h>
 #include <IOKit/IOWorkLoop.h>
-
+#include <IOKit/IOKitKeysPrivate.h>
 #include "IOHIDLibUserClient.h"
 #include "IOHIDDevice.h"
 #include "IOHIDEventQueue.h"
@@ -161,6 +165,13 @@ sMethods[kIOHIDLibUserClientNumCommands] = {
 	kIOUCStructIStructO,
 	sizeof(IOHIDReportReq),
 	0
+    },
+    { //    kIOHIDLibUserClientDeviceIsValid
+    0,
+	(IOMethod) &IOHIDLibUserClient::deviceIsValid,
+	kIOUCScalarIScalarO,
+	0,
+	2
     }    
 };
 
@@ -203,11 +214,11 @@ initWithTask(task_t owningTask, void * /* security_id */, UInt32 /* type */)
     if (!super::init())
 	return false;
 
-    fClient = owningTask;
-    fGate = 0;
-    fCachedOptionBits = 0;
-    
+    fClient = owningTask;    
     task_reference (fClient);
+
+    proc_t p = (proc_t)get_bsdtask_info(fClient);
+    fPid = proc_pid(p);
 
     fQueueSet = OSSet::withCapacity(4);
     if (!fQueueSet)
@@ -218,10 +229,21 @@ initWithTask(task_t owningTask, void * /* security_id */, UInt32 /* type */)
 
 IOReturn IOHIDLibUserClient::clientClose(void)
 {
-    return fGate->runAction(OSMemberFunctionCast(IOCommandGate::Action, this, &IOHIDLibUserClient::clientCloseGated));
+    if ( !isInactive() ) {
+        fGate->runAction(OSMemberFunctionCast(IOCommandGate::Action, this, &IOHIDLibUserClient::cleanupGated));
+        terminate();
+    }
+    
+    return kIOReturnSuccess;
 }
 
-IOReturn IOHIDLibUserClient::clientCloseGated(void)
+bool IOHIDLibUserClient::didTerminate( IOService * provider, IOOptionBits options, bool * defer )
+{
+    fGate->runAction(OSMemberFunctionCast(IOCommandGate::Action, this, &IOHIDLibUserClient::cleanupGated));
+    return super::didTerminate(provider, options, defer);
+}
+
+void IOHIDLibUserClient::cleanupGated()
 {
    if (fClient) {
         task_deallocate(fClient);
@@ -231,66 +253,157 @@ IOReturn IOHIDLibUserClient::clientCloseGated(void)
    if (fNub) {	
    
         // First clear any remaining queues
-        OSCollectionIterator * iterator = OSCollectionIterator::withCollection(fQueueSet);
-        
-        if (iterator)
-        {
-            IOHIDEventQueue * queue;
-            while (queue = (IOHIDEventQueue *)iterator->getNextObject())
-            {
-                fNub->stopEventDelivery(queue);
-            }
-            iterator->release();
-        }
+        setStateForQueues(kHIDQueueStateClear);
         
         // Have been started so we better detach
 		
         // make sure device is closed (especially on crash)
         // note radar #2729708 for a more comprehensive fix
         // probably should also subclass clientDied for crash specific code
-        fNub->close(this, fCachedOptionBits);
-        
-        detach(fNub);
+        fNub->close(this, fCachedOptionBits);        
     }
-
-    return kIOReturnSuccess;
+    
+    if ( fResourceNotification ) {
+        fResourceNotification->remove();
+        fResourceNotification = 0;
+    }
 }
 
 bool IOHIDLibUserClient::start(IOService *provider)
 {
-    IOWorkLoop *wl = 0;
-
+    IOCommandGate * cmdGate = NULL;
+    
     if (!super::start(provider))
-	return false;
+		return false;
 
     fNub = OSDynamicCast(IOHIDDevice, provider);
     if (!fNub)
-	return false;
+		return false;
             
-    fGate = 0;
+	OSNumber *primaryUsage = OSDynamicCast(OSNumber, fNub->getProperty(kIOHIDPrimaryUsageKey));
+	OSNumber *primaryUsagePage = OSDynamicCast(OSNumber, fNub->getProperty(kIOHIDPrimaryUsagePageKey));
 
-    wl = getWorkLoop();
-    if (!wl)
+	if ((primaryUsagePage && (primaryUsagePage->unsigned32BitValue() == kHIDPage_GenericDesktop)) &&
+		(primaryUsage && ((primaryUsage->unsigned32BitValue() == kHIDUsage_GD_Keyboard) || (primaryUsage->unsigned32BitValue() == kHIDUsage_GD_Keypad)))) 
+	{
+		fNubIsKeyboard = true;
+	}
+
+    fWL = getWorkLoop();
+    if (!fWL)
         goto ABORT_START;
 
-    fGate = IOCommandGate::commandGate(this);
-    if (!fGate)
+    fWL->retain();
+
+    cmdGate = IOCommandGate::commandGate(this);
+    if (!cmdGate)
         goto ABORT_START;
     
-    wl->retain();
-    wl->addEventSource(fGate);
+    fWL->addEventSource(cmdGate);
+    
+    fGate = cmdGate;
+
+    fResourceES = IOInterruptEventSource::interruptEventSource
+        (this, OSMemberFunctionCast(IOInterruptEventSource::Action, this, &IOHIDLibUserClient::resourceNotificationGated));
+        
+    if ( !fResourceES )
+        goto ABORT_START;
+
+    fWL->addEventSource(fResourceES);
+
+    // Get notified everytime Root properties change
+    fResourceNotification = addNotification(
+        gIOPublishNotification, 
+        serviceMatching("IOResources"),
+        OSMemberFunctionCast(IOServiceNotificationHandler, this, &IOHIDLibUserClient::resourceNotification),
+        this);
+                    
+    if ( !fResourceNotification )
+        goto ABORT_START;
     
     return true;
 
 ABORT_START:
     if (fGate) {
-        wl->removeEventSource(fGate);
-        wl->release();
+        fWL->removeEventSource(fGate);
+        fWL->release();
+        fWL = 0;
         fGate->release();
         fGate = 0;
     }
 
     return false;
+}
+
+bool IOHIDLibUserClient::resourceNotification(void * refcon, IOService *service)
+{
+    if (!isInactive() && fResourceES) 
+        fResourceES->interruptOccurred(0, 0, 0);
+    return true;
+}
+
+void IOHIDLibUserClient::resourceNotificationGated()
+{
+    IOReturn ret = kIOReturnSuccess;
+    OSData * data;
+    IOService * service = getResourceService();
+    
+    do {
+        // Always force success on seize
+        if ( kIOHIDOptionsTypeSeizeDevice & fCachedOptionBits )
+            break;
+        
+        if ( !service ) {
+			ret = kIOReturnError;
+            break;
+		}
+            
+        data = OSDynamicCast(OSData, service->getProperty(kIOConsoleUsersSeedKey));
+
+        if ( !data || !data->getLength() || !data->getBytesNoCopy()) {
+			ret = kIOReturnError;
+            break;
+		}
+            
+        UInt64 currentSeed = 0;
+        
+        switch ( data->getLength() ) {
+            case sizeof(UInt8):
+                currentSeed = *(UInt8*)(data->getBytesNoCopy());
+                break;
+            case sizeof(UInt16):
+                currentSeed = *(UInt16*)(data->getBytesNoCopy());
+                break;
+            case sizeof(UInt32):
+                currentSeed = *(UInt32*)(data->getBytesNoCopy());
+                break;
+            case sizeof(UInt64):
+            default:
+                currentSeed = *(UInt64*)(data->getBytesNoCopy());
+                break;
+        }
+            
+        // We should return rather than break so that previous setting is retained
+        if ( currentSeed == fCachedConsoleUsersSeed )
+            return;
+            
+        fCachedConsoleUsersSeed = currentSeed;
+
+        ret = clientHasPrivilege(fClient, kIOClientPrivilegeAdministrator);
+        if (ret == kIOReturnSuccess) 
+            break;
+
+		if ( fNubIsKeyboard ) {
+			IOUCProcessToken token;
+			token.token = fClient;
+			token.pid = fPid;
+			ret = clientHasPrivilege(&token, kIOClientPrivilegeSecureConsoleProcess);
+		} else {
+			ret = clientHasPrivilege(fClient, kIOClientPrivilegeConsoleUser);
+		}
+    } while (false);
+    
+    setValid(kIOReturnSuccess == ret);
 }
 
 IOExternalMethod *IOHIDLibUserClient::
@@ -347,24 +460,25 @@ IOReturn IOHIDLibUserClient::open(void * flags)
     return fGate->runAction(OSMemberFunctionCast(IOCommandGate::Action, this, &IOHIDLibUserClient::openGated), flags);
 }
 
-IOReturn IOHIDLibUserClient::openGated(void * flags)
+IOReturn IOHIDLibUserClient::openGated(IOOptionBits options)
 {
-    IOReturn 		ret = kIOReturnSuccess;
-    IOOptionBits 	options = (IOOptionBits)flags;
+    IOReturn ret = kIOReturnNotPrivileged;
     
     ret = clientHasPrivilege(fClient, kIOClientPrivilegeLocalUser);
     if (ret != kIOReturnSuccess)
-    {
         ret = clientHasPrivilege(fClient, kIOClientPrivilegeAdministrator);
-        if (ret != kIOReturnSuccess)
-            return ret;
-    }
+
+    if (ret != kIOReturnSuccess)
+        return ret;
     
     if (!fNub->IOService::open(this, options))
-        return kIOReturnExclusiveAccess;
-        
+        return kIOReturnExclusiveAccess;   
+		
     fCachedOptionBits = options;
 
+    fCachedConsoleUsersSeed = 0;
+	resourceNotificationGated();
+	
     return kIOReturnSuccess;
 }
 
@@ -378,46 +492,203 @@ IOReturn IOHIDLibUserClient::closeGated()
 {
     fNub->close(this, fCachedOptionBits);
 
+	fCachedOptionBits = 0;
+	fCachedConsoleUsersSeed = 0;
+	resourceNotificationGated();
+
     // @@@ gvdl: release fWakePort leak them for the time being
 
     return kIOReturnSuccess;
 }
 
-bool
-IOHIDLibUserClient::didTerminate( IOService * provider, IOOptionBits options, bool * defer )
-{    
-    fNub->close(this, fCachedOptionBits);
-        
-    return super::didTerminate(provider, options, defer);
-}
 
 void IOHIDLibUserClient::free()
 {
-    IOWorkLoop *wl;
-
-    if (fGate) 
-    {
-        wl = fGate->getWorkLoop();
-        if (wl) 
-            wl->release();
-        
-        fGate->release();
-        fGate = 0;
-    }
     
-    if (fQueueSet)
-    {
+    if (fQueueSet) {
         fQueueSet->release();
         fQueueSet = 0;
     }
     
-    if (fNub)
-    {
+    if (fNub) {
         fNub = 0;
     }
-    
+
+    if (fResourceES) {
+        if ( fWL )
+            fWL->removeEventSource(fResourceES);
+        fResourceES->release();
+        fResourceES = 0;
+    }
+
+    if (fGate) {
+        if (fWL) {
+            fWL->removeEventSource(fGate);
+        }
+        
+        fGate->release();
+        fGate = 0;
+    }
+
+    if ( fWL ) {
+        fWL->release();
+        fWL = 0;
+    }
     super::free();
 }
+
+IOReturn IOHIDLibUserClient::message(UInt32 type, IOService * provider, void * argument )
+{
+    if ( !isInactive() && fGate ) 
+        fGate->runAction(OSMemberFunctionCast(IOCommandGate::Action, this, &IOHIDLibUserClient::messageGated), (void *)type, provider, argument);
+    return super::message(type, provider, argument);
+}
+
+IOReturn IOHIDLibUserClient::messageGated(UInt32 type, IOService * provider, void * argument )
+{
+    IOOptionBits options = (IOOptionBits)argument;
+    switch ( type ) {
+        case kIOMessageServiceIsRequestingClose:
+            if ((options & kIOHIDOptionsTypeSeizeDevice) && (options != fCachedOptionBits))
+                setValid(false);
+            break;
+            
+        case kIOMessageServiceWasClosed:
+            if ((options & kIOHIDOptionsTypeSeizeDevice) && (options != fCachedOptionBits)) {
+                // instead of calling set valid, let's make sure we still have
+                // permission through the resource notification
+                fCachedConsoleUsersSeed = 0;
+                resourceNotificationGated();
+            }
+            break;
+    };
+    
+    return kIOReturnSuccess;
+}
+
+IOReturn IOHIDLibUserClient::registerNotificationPort(mach_port_t port, UInt32 type, UInt32	refCon)
+{
+    return fGate->runAction(OSMemberFunctionCast(IOCommandGate::Action, this, &IOHIDLibUserClient::registerNotificationPortGated), (void *)port, (void *)type, (void *)refCon);
+}
+
+IOReturn IOHIDLibUserClient::registerNotificationPortGated(mach_port_t port, UInt32 type, UInt32	refCon)
+{
+    IOReturn kr = kIOReturnSuccess;
+    
+    switch ( type ) {
+        case kIOHIDLibUserClientDeviceValidPortType:
+            fValidPort = port;
+
+            static struct _notifyMsg init_msg = { {
+                MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, 0),
+                sizeof (struct _notifyMsg),
+                MACH_PORT_NULL,
+                MACH_PORT_NULL,
+                0,
+                0
+            } };
+               
+            if ( fValidMessage ) { 
+                IOFree(fValidMessage, sizeof (struct _notifyMsg));
+                fValidMessage = NULL;
+            }
+
+            if ( !fValidPort ) 
+                break;
+                
+            if ( !(fValidMessage = IOMalloc( sizeof(struct _notifyMsg))) ) {
+                kr = kIOReturnNoMemory;
+                break;
+            }
+                
+            // Initialize the events available message.
+            *((struct _notifyMsg *)fValidMessage) = init_msg;
+
+            ((struct _notifyMsg *)fValidMessage)->h.msgh_remote_port = fValidPort;
+            
+            dispatchMessage(fValidMessage);
+            
+            break;
+        default:
+            kr = kIOReturnUnsupported;
+            break;
+    };
+
+    return kr;
+}
+
+void IOHIDLibUserClient::setValid(bool state)
+{
+    if (fValid == state)
+        return;
+
+    if ( !state ) {    
+        // unmap this memory
+        if (fNub && !isInactive()) {
+            IOMemoryDescriptor * mem;
+            IOMemoryMap * map;
+
+            mem = fNub->getMemoryWithCurrentElementValues();
+            
+            if ( mem ) {
+                map = removeMappingForDescriptor(mem);
+                
+                if ( map )
+                    map->release();
+            }
+        }
+        fGeneration++;
+    }
+    
+    // set the queue states
+    setStateForQueues(state ? kHIDQueueStateEnable : kHIDQueueStateDisable);
+    
+    // dispatch message
+    dispatchMessage(fValidMessage);
+    
+    fValid = state;
+}
+
+IOReturn IOHIDLibUserClient::dispatchMessage(void * message)
+{
+    IOReturn ret = kIOReturnError;
+    mach_msg_header_t * msgh = (mach_msg_header_t *)message;
+    if( msgh) {
+        ret = mach_msg_send_from_kernel( msgh, msgh->msgh_size);
+        switch ( ret ) {
+            case MACH_SEND_TIMED_OUT:/* Already has a message posted */
+            case MACH_MSG_SUCCESS:	/* Message is posted */
+                break;
+        };
+    }
+    return ret;
+}
+
+void IOHIDLibUserClient::setStateForQueues(UInt32 state, IOOptionBits options)
+{
+    OSCollectionIterator * iterator = OSCollectionIterator::withCollection(fQueueSet);
+    
+    if (iterator)
+    {
+        IOHIDEventQueue * queue;
+        while (queue = (IOHIDEventQueue *)iterator->getNextObject())
+        {
+            switch (state) {
+                case kHIDQueueStateEnable:
+                    queue->enable();
+                    break;
+                case kHIDQueueStateDisable:
+                    queue->disable();
+                    break;
+                case kHIDQueueStateClear:
+                    fNub->stopEventDelivery(queue);
+                    break;
+            };
+        }
+        iterator->release();
+    }
+}
+
 
 IOReturn IOHIDLibUserClient::clientMemoryForType (	
                                     UInt32                  type,
@@ -437,10 +708,10 @@ IOReturn IOHIDLibUserClient::clientMemoryForTypeGated(
     IOHIDEventQueue *       queue           = NULL;
     
     // if the type is element values, then get that
-    if (type == IOHIDLibUserClientElementValuesType)
+    if (type == kIOHIDLibUserClientElementValuesType)
     {
         // if we can get an element values ptr
-        if (fNub && !isInactive())
+        if (fValid && fNub && !isInactive())
             memoryToShare = fNub->getMemoryWithCurrentElementValues();
     }
     // otherwise, the type is an object pointer (evil hack alert - see header)
@@ -468,6 +739,25 @@ IOReturn IOHIDLibUserClient::clientMemoryForTypeGated(
     return ret;
 }
 
+IOReturn IOHIDLibUserClient::deviceIsValid(void * vOutStatus, void * vOutGeneration)
+{
+    return fGate->runAction(OSMemberFunctionCast(IOCommandGate::Action, this, &IOHIDLibUserClient::deviceIsValidGated), vOutStatus, vOutGeneration);
+}
+
+IOReturn IOHIDLibUserClient::deviceIsValidGated(void * vOutStatus, void * vOutGeneration)
+{
+    UInt32 *pStatus = (UInt32 *)vOutStatus;
+    UInt32 *pGeneration = (UInt32 *)vOutGeneration;
+    
+    if ( pStatus )
+        *pStatus = fValid;
+        
+    if ( pGeneration )
+        *pGeneration = fGeneration;
+    
+    return kIOReturnSuccess;
+}
+
 IOReturn IOHIDLibUserClient::createQueue(void * vInFlags, void * vInDepth, void * vOutQueue)
 {
     return fGate->runAction(OSMemberFunctionCast(IOCommandGate::Action, this, &IOHIDLibUserClient::createQueueGated), vInFlags, vInDepth, vOutQueue);
@@ -481,7 +771,10 @@ IOReturn IOHIDLibUserClient::createQueueGated(void * vInFlags, void * vInDepth, 
 
     // create the queue (fudge it a bit bigger than requested)
     IOHIDEventQueue * eventQueue = IOHIDEventQueue::withEntries (depth+1, DEFAULT_HID_ENTRY_SIZE);
-    
+
+    if ( !fValid && eventQueue )
+        eventQueue->disable();
+
     // set out queue
     *outQueue = eventQueue;
             

@@ -70,8 +70,8 @@ enum {
 } while (0)
 
 #define seizeCheck() do {               \
-    if ((!fOwningDevice) ||		\
-         (fOwningDevice->fIsSeized))    \
+    if ((!fOwningDevice) ||             \
+         (!fOwningDevice->isValid()))    \
         return kIOReturnExclusiveAccess;\
 } while (0)
 

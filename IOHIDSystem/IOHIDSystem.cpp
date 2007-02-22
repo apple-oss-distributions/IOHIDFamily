@@ -2889,13 +2889,12 @@ void IOHIDSystem::keyboardEvent(unsigned   eventType,
 KEYBOARD_EVENT_PROCESS:
     
     if ( ! (displayState & IOPMDeviceUsable) ) {	// display is off, consume the keystroke
-        if ( eventType == NX_KEYDOWN )
+        if ( eventType == NX_KEYDOWN ) {
             return;
-            
-        TICKLE_DISPLAY;
-        
-        if ( eventType == NX_KEYUP )
+        } else if ( eventType == NX_KEYUP ) {
+            TICKLE_DISPLAY;
             return;
+        }
     }
 
     keyboardEQElement = (KeyboardEQElement *)IOMalloc(sizeof(KeyboardEQElement));

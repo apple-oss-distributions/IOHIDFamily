@@ -39,6 +39,7 @@ __BEGIN_DECLS
 #include <mach/mach_interface.h>
 #include <IOKit/iokitmig.h>
 #include <IOKit/IOMessage.h>
+#include <IOKit/IODataQueueClient.h>
 #include <System/libkern/OSCrossEndian.h>
 __END_DECLS
 
@@ -58,7 +59,7 @@ __END_DECLS
 } while (0)    
 
 #define seizeCheck() do {           \
-    if (fIsSeized)                  \
+    if (!isValid()) \
         return kIOReturnExclusiveAccess; \
 } while (0)
 
@@ -101,11 +102,11 @@ IOHIDDeviceClass::IOHIDDeviceClass()
     fConnection 		= MACH_PORT_NULL;
     fAsyncPort 			= MACH_PORT_NULL;
     fNotifyPort 		= MACH_PORT_NULL;
+    fDeviceValidPort    = MACH_PORT_NULL;
 
     fIsOpen 			= false;
     fIsLUNZero			= false;
     fIsTerminated		= false;
-    fIsSeized			= false;
     fAsyncPortSetupDone = false;
 
     fRunLoop 			= NULL;
@@ -134,6 +135,8 @@ IOHIDDeviceClass::IOHIDDeviceClass()
     
     fReportHandlerElementCount	= 0;
     fReportHandlerElements	= NULL;
+    
+    fGeneration = -1;
 }
 
 IOHIDDeviceClass::~IOHIDDeviceClass()
@@ -148,6 +151,11 @@ IOHIDDeviceClass::~IOHIDDeviceClass()
         fService = MACH_PORT_NULL;
     }
     
+    if ( fDeviceValidPort ) {
+        mach_port_deallocate(mach_task_self(), fDeviceValidPort);
+        fDeviceValidPort = MACH_PORT_NULL;
+    }
+
     if (fReportHandlerQueue){
         delete fReportHandlerQueue;
         fReportHandlerQueue = 0;
@@ -353,7 +361,7 @@ start(CFDictionaryRef propertyTable, io_service_t inService)
     fNotifyPrivateDataRef = (MyPrivateData *)malloc(sizeof(MyPrivateData));
     bzero(fNotifyPrivateDataRef, sizeof(MyPrivateData));
     
-    fNotifyPrivateDataRef->self		= this;
+    fNotifyPrivateDataRef->self = this;
 
     // Register for an interest notification of this device being removed. Use a reference to our
     // private data as the refCon which will be passed to the notification callback.
@@ -367,6 +375,17 @@ start(CFDictionaryRef propertyTable, io_service_t inService)
     // Now done with the master_port
     mach_port_deallocate(mach_task_self(), masterPort);
     masterPort = 0;
+
+    // Create port to determine if mem maps are valid.  Use 
+    // IODataQueueAllocateNotificationPort cause that limits the msg queue to 
+    // one entry.
+    fDeviceValidPort = IODataQueueAllocateNotificationPort();
+    if (fDeviceValidPort == MACH_PORT_NULL)
+        return kIOReturnNoMemory;
+        
+    kr = IOConnectSetNotificationPort(fConnection, kIOHIDLibUserClientDeviceValidPortType, fDeviceValidPort, NULL);
+    if (kr != kIOReturnSuccess)
+        return kr;
     
     kr = IORegistryEntryCreateCFProperties (fService,
                                             &properties,
@@ -387,6 +406,94 @@ start(CFDictionaryRef propertyTable, io_service_t inService)
     return kIOReturnSuccess;
 }
 
+IOReturn IOHIDDeviceClass::createSharedMemory(UInt32 generation)
+{
+    // get the shared memory
+    if ( generation == fGeneration ) 
+        return kIOReturnSuccess;
+        
+#if !__LP64__
+    vm_address_t        address = nil;
+    vm_size_t           size    = 0;
+#else
+    mach_vm_address_t   address = nil;
+    mach_vm_size_t      size    = 0;
+#endif
+    IOReturn ret = IOConnectMapMemory (	
+                                fConnection, 
+                                kIOHIDLibUserClientElementValuesType, 
+                                mach_task_self(), 
+                                &address, 
+                                &size, 
+                                kIOMapAnywhere	);
+
+    if (ret != kIOReturnSuccess)
+        return kIOReturnError;
+        
+    fCurrentValuesMappedMemory = address;
+    fCurrentValuesMappedMemorySize = size;
+    
+    if ( !fCurrentValuesMappedMemory )
+        return kIOReturnNoMemory;
+
+    fGeneration = generation;
+    
+    return kIOReturnSuccess;
+}
+
+IOReturn IOHIDDeviceClass::releaseSharedMemory()
+{    
+    // finished with the shared memory
+    if (!fCurrentValuesMappedMemory) 
+        return kIOReturnSuccess;
+        
+    IOReturn ret = IOConnectUnmapMemory (	
+                                fConnection, 
+                                kIOHIDLibUserClientElementValuesType, 
+                                mach_task_self(), 
+                                fCurrentValuesMappedMemory);
+                                
+    fCurrentValuesMappedMemory      = 0;
+    fCurrentValuesMappedMemorySize  = 0;
+    
+    return ret;
+}
+
+Boolean IOHIDDeviceClass::isValid()
+{
+    IOReturn kr;
+    
+    struct {
+            mach_msg_header_t	msgHdr;
+            OSNotificationHeader	notifyHeader;
+            mach_msg_trailer_t	trailer;
+    } msg;
+    
+    kr = mach_msg(&msg.msgHdr, MACH_RCV_MSG | MACH_RCV_TIMEOUT, 0, sizeof(msg), fDeviceValidPort, 0, MACH_PORT_NULL);
+    
+    switch ( kr ) {
+        case MACH_MSG_SUCCESS:
+            int args[2];
+            int len = 2;
+            
+            args[0] = 1;
+            args[1] = fGeneration;
+
+            kr = io_connect_method_scalarI_scalarO(fConnection, kIOHIDLibUserClientDeviceIsValid, 0, 0, args, (mach_msg_type_number_t*)&len);
+            
+            if ( args[0] /*valid*/ )
+                kr = createSharedMemory(args[1] /*generation */);
+            else {
+                fCurrentValuesMappedMemory      = 0;
+                fCurrentValuesMappedMemorySize  = 0;
+            }
+            break;
+    };
+
+    return fCurrentValuesMappedMemory != 0;
+}
+
+
 // RY: There are 2 General Interest notification event sources.
 // One is operating on the main run loop via fNotifyPort and is internal 
 // to the IOHIDDeviceClass.  The other is used by the client to get removal 
@@ -406,65 +513,26 @@ void IOHIDDeviceClass::_deviceNotification( void *refCon,
     
     self = privateDataRef->self;
     
-    if (!self)
+    if (!self || (messageType != kIOMessageServiceIsTerminated))
+         return;
+
+    self->fIsTerminated = true;
+    
+    if ( privateDataRef != self->fAsyncPrivateDataRef)
         return;
-
-    switch(messageType)
-    {
-        case kIOMessageServiceIsTerminated:
-				
-            self->fIsTerminated = true;
-            
-			if ( privateDataRef != self->fAsyncPrivateDataRef)
-				break;
-            
-            if (self->fRemovalCallback)
-            {            
-                ((IOHIDCallbackFunction)self->fRemovalCallback)(
-                                                self->fRemovalTarget,
-                                                kIOReturnSuccess,
-                                                self->fRemovalRefcon,
-                                                (void *)&(self->fHIDDevice));
-            }
-            // Free up the notificaiton
-            IOObjectRelease(privateDataRef->notification);
-            free(self->fAsyncPrivateDataRef);
-			self->fAsyncPrivateDataRef = 0;
-            break;
-        
-        case kIOMessageServiceIsRequestingClose:
-			if ( privateDataRef != self->fNotifyPrivateDataRef)
-				break;
-
-            if ((options & kIOHIDOptionsTypeSeizeDevice) &&
-                (options != self->fCachedFlags))
-            {
-                self->stopAllQueues(true);
-                if (self->fReportHandlerQueue)
-                    self->fReportHandlerQueue->stop();
-				self->close();
-                self->fIsSeized = true;
-            }
-            break;
-            
-        case kIOMessageServiceWasClosed:
-			if ( privateDataRef != self->fNotifyPrivateDataRef)
-				break;
-
-            if (self->fIsSeized &&
-                (options & kIOHIDOptionsTypeSeizeDevice) &&
-                (options != self->fCachedFlags))
-            {
-                self->fIsSeized = false;
-
-				self->open(self->fCachedFlags);
-
-                self->startAllQueues(true);
-                if (self->fReportHandlerQueue)
-                    self->fReportHandlerQueue->start();
-            }
-            break;
-    }    
+    
+    if (self->fRemovalCallback)
+    {            
+        ((IOHIDCallbackFunction)self->fRemovalCallback)(
+                                        self->fRemovalTarget,
+                                        kIOReturnSuccess,
+                                        self->fRemovalRefcon,
+                                        (void *)&(self->fHIDDevice));
+    }
+    // Free up the notificaiton
+    IOObjectRelease(privateDataRef->notification);
+    free(self->fAsyncPrivateDataRef);
+    self->fAsyncPrivateDataRef = 0;
 }
 
 IOReturn IOHIDDeviceClass::
@@ -590,7 +658,6 @@ IOReturn IOHIDDeviceClass::open(UInt32 flags)
     }
 
     fIsOpen = true;
-    fIsSeized = false;
 
     if (!fAsyncPortSetupDone && fAsyncPort) {
 		ret = finishAsyncPortSetup();
@@ -601,24 +668,7 @@ IOReturn IOHIDDeviceClass::open(UInt32 flags)
         }
     }
     
-    // get the shared memory
-	if ( !fCurrentValuesMappedMemory )
-	{
-		vm_address_t address = nil;
-		vm_size_t size = 0;
-		
-		ret = IOConnectMapMemory (	fConnection, 
-									IOHIDLibUserClientElementValuesType, 
-									mach_task_self(), 
-									&address, 
-									&size, 
-									kIOMapAnywhere	);
-		if (ret == kIOReturnSuccess)
-		{
-			fCurrentValuesMappedMemory = address;
-			fCurrentValuesMappedMemorySize = size;
-		}
-	}
+    isValid();
     
     return ret;
 }
@@ -634,15 +684,7 @@ IOReturn IOHIDDeviceClass::close()
 #endif
 
     // finished with the shared memory
-    if (fCurrentValuesMappedMemory)
-    {
-        (void) IOConnectUnmapMemory (	fConnection, 
-                                        IOHIDLibUserClientElementValuesType, 
-                                        mach_task_self(), 
-                                        fCurrentValuesMappedMemory);
-        fCurrentValuesMappedMemory      = 0;
-        fCurrentValuesMappedMemorySize  = 0;
-    }
+    releaseSharedMemory();
 
     mach_msg_type_number_t len = 0;
     // kIOCDBUserClientClose,	kIOUCScalarIScalarO,	 0,  0
@@ -1421,7 +1463,7 @@ void IOHIDDeviceClass::convertWordToByte( const UInt32 * src,
     }
 }
 
-IOReturn IOHIDDeviceClass::startAllQueues(bool deviceInitiated)
+IOReturn IOHIDDeviceClass::startAllQueues()
 {
     IOReturn ret = kIOReturnSuccess;
     
@@ -1436,7 +1478,7 @@ IOReturn IOHIDDeviceClass::startAllQueues(bool deviceInitiated)
         
         for (int i=0; queues && i<queueCount; i++)
         {
-            ret = queues[i]->start(deviceInitiated);
+            ret = queues[i]->start();
         }
         
         if (queues)
@@ -1447,7 +1489,7 @@ IOReturn IOHIDDeviceClass::startAllQueues(bool deviceInitiated)
     return ret;
 }
 
-IOReturn IOHIDDeviceClass::stopAllQueues(bool deviceInitiated)
+IOReturn IOHIDDeviceClass::stopAllQueues()
 {
     IOReturn ret = kIOReturnSuccess;
     
@@ -1462,7 +1504,7 @@ IOReturn IOHIDDeviceClass::stopAllQueues(bool deviceInitiated)
         
         for (int i=0; queues && i<queueCount && ret==kIOReturnSuccess; i++)
         {
-            ret = queues[i]->stop(deviceInitiated);
+            ret = queues[i]->stop();
         }
         
         if (queues)
