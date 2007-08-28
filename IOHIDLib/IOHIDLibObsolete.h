@@ -22,8 +22,8 @@
  * @APPLE_LICENSE_HEADER_END@
  */
 
-#ifndef _IOKIT_HID_IOHIDLIB_H_
-#define _IOKIT_HID_IOHIDLIB_H_
+#ifndef _IOKIT_HID_IOHIDLIBOBSOLETE_H_
+#define _IOKIT_HID_IOHIDLIBOBSOLETE_H_
 
 #include <sys/cdefs.h>
 
@@ -42,10 +42,10 @@ struct IOHIDEventStruct
 {
     IOHIDElementType	type;
     IOHIDElementCookie	elementCookie;
-    SInt32		value;
-    AbsoluteTime	timestamp;
-    UInt32		longValueSize;
-    void *		longValue;
+    int32_t             value;
+    AbsoluteTime        timestamp;
+    uint32_t            longValueSize;
+    void *              longValue;
 };
 typedef struct IOHIDEventStruct IOHIDEventStruct;
 
@@ -53,11 +53,6 @@ typedef struct IOHIDEventStruct IOHIDEventStruct;
 #define kIOHIDDeviceUserClientTypeID CFUUIDGetConstantUUIDWithBytes(NULL, \
     0xFA, 0x12, 0xFA, 0x38, 0x6F, 0x1A, 0x11, 0xD4,			\
     0xBA, 0x0C, 0x00, 0x05, 0x02, 0x8F, 0x18, 0xD5)
-
-/* 13AA9C44-6F1B-11D4-907C-0005028F18D5 */
-#define kIOHIDDeviceFactoryID CFUUIDGetConstantUUIDWithBytes(NULL,	\
-    0x13, 0xAA, 0x9C, 0x44, 0x6F, 0x1B, 0x11, 0xD4,			\
-    0x90, 0x7C, 0x00, 0x05, 0x02, 0x8F, 0x18, 0xD5)
 
 /* 78BD420C-6F14-11D4-9474-0005028F18D5 */
 /*! @defined kIOHIDDeviceInterfaceID
@@ -114,8 +109,7 @@ typedef struct IOHIDEventStruct IOHIDEventStruct;
     @param refcon void * pointer to more data.
     @param sender Interface instance sending the completion routine.
 */
-typedef void (*IOHIDCallbackFunction)
-              (void * target, IOReturn result, void * refcon, void * sender);
+typedef void (*IOHIDCallbackFunction)(void * target, IOReturn result, void * refcon, void * sender);
 
 /*! @typedef IOHIDElementCallbackFunction
     @discussion Type and arguments of callout C function that is used when a
@@ -126,12 +120,7 @@ typedef void (*IOHIDCallbackFunction)
     @param sender Interface instance sending the completion routine.
     @param elementCookie Element within interface instance sending completion.
 */
-typedef void (*IOHIDElementCallbackFunction)
-              (void *	 		target,
-               IOReturn 		result,
-               void * 			refcon,
-               void * 			sender,
-               IOHIDElementCookie 	elementCookie);
+typedef void (*IOHIDElementCallbackFunction) (void * target, IOReturn result, void * refcon, void * sender, IOHIDElementCookie 	elementCookie);
 
 /*! @typedef IOHIDReportCallbackFunction
     @discussion Type and arguments of callout C function that is used when a
@@ -142,12 +131,7 @@ typedef void (*IOHIDElementCallbackFunction)
     @param sender Interface instance sending the completion routine.
     @param bufferSize Size of the buffer received upon completion.
 */
-typedef void (*IOHIDReportCallbackFunction)
-              (void *	 		target,
-               IOReturn 		result,
-               void * 			refcon,
-               void * 			sender,
-               UInt32		 	bufferSize);
+typedef void (*IOHIDReportCallbackFunction) (void * target, IOReturn result, void * refcon,  void * sender,  uint32_t bufferSize);
                
 
 /* Forward declarations of the queue and output transaction interfaces */
@@ -164,18 +148,18 @@ typedef struct IOHIDOutputTransactionInterface IOHIDOutputTransactionInterface;
     CFRunLoopSourceRef (*getAsyncEventSource)(void * self);				\
     IOReturn (*createAsyncPort)(void * self, mach_port_t * port);			\
     mach_port_t (*getAsyncPort)(void * self);						\
-    IOReturn (*open)(void * self, UInt32 flags);					\
+    IOReturn (*open)(void * self, IOOptionBits flags);					\
     IOReturn (*close)(void * self);							\
     IOReturn (*setRemovalCallback)(void * self, IOHIDCallbackFunction removalCallback,	\
                                    void * removalTarget, void * removalRefcon);		\
     IOReturn (*getElementValue)(void * self, IOHIDElementCookie	elementCookie,		\
                                 IOHIDEventStruct * valueEvent);				\
     IOReturn (*setElementValue)(void * self, IOHIDElementCookie elementCookie,		\
-                                IOHIDEventStruct * valueEvent, UInt32 timeoutMS,	\
+                                IOHIDEventStruct * valueEvent, uint32_t timeoutMS,	\
                                 IOHIDElementCallbackFunction callback,			\
                                 void * callbackTarget, void * callbackRefcon);		\
     IOReturn (*queryElementValue)(void * self, IOHIDElementCookie elementCookie,	\
-                                IOHIDEventStruct * valueEvent, UInt32 timeoutMS,	\
+                                IOHIDEventStruct * valueEvent, uint32_t timeoutMS,	\
                                 IOHIDElementCallbackFunction callback,			\
                                 void * callbackTarget, void * callbackRefcon);		\
     IOReturn (*startAllQueues)(void * self);						\
@@ -187,16 +171,16 @@ typedef struct IOHIDOutputTransactionInterface IOHIDOutputTransactionInterface;
 // IOHIDDeviceInterface Functions available in version 1.2.1 (10.2.3) and higher of Mac OS X
 //
 #define IOHIDDEVICEINTERFACE_FUNCS_121	 						\
-    IOReturn (*setReport)(void * self, IOHIDReportType reportType, UInt32 reportID,	\
-                                void * reportBuffer, UInt32 reportBufferSize,		\
-                                UInt32 timeoutMS, IOHIDReportCallbackFunction callback,	\
+    IOReturn (*setReport)(void * self, IOHIDReportType reportType, uint32_t reportID,	\
+                                void * reportBuffer, uint32_t reportBufferSize,		\
+                                uint32_t timeoutMS, IOHIDReportCallbackFunction callback,	\
                                 void * callbackTarget, void * callbackRefcon);		\
     IOReturn (*getReport)(void * self, IOHIDReportType reportType,			\
-                                UInt32 reportID, void * reportBuffer,			\
-                                UInt32 * reportBufferSize, UInt32 timeoutMS,		\
+                                uint32_t reportID, void * reportBuffer,			\
+                                uint32_t * reportBufferSize, uint32_t timeoutMS,		\
                                 IOHIDReportCallbackFunction callback,			\
                                 void * callbackTarget, void * callbackRefcon)
-                                
+                                                                
 //
 // IOHIDDeviceInterface Functions available in version 1.2.2 (10.3) and higher of Mac OS X
 //
@@ -204,10 +188,10 @@ typedef struct IOHIDOutputTransactionInterface IOHIDOutputTransactionInterface;
     IOReturn (*copyMatchingElements)(void * self, CFDictionaryRef matchingDict, 	\
                                 CFArrayRef * elements);					\
     IOReturn (*setInterruptReportHandlerCallback)(void * self, void * reportBuffer, 		\
-                                UInt32 reportBufferSize, 				\
+                                uint32_t reportBufferSize, 				\
                                 IOHIDReportCallbackFunction callback,			\
                                 void * callbackTarget, void * callbackRefcon)	
-
+                                
 typedef struct IOHIDDeviceInterface
 {
     IUNKNOWN_C_GUTS;
@@ -230,7 +214,6 @@ typedef struct IOHIDDeviceInterface122
     IOHIDDEVICEINTERFACE_FUNCS_122;
 } IOHIDDeviceInterface122;
 
-
 //
 // IOHIDQueueInterface Functions available in version 1.0 (10.0) and higher of Mac OS X
 //
@@ -239,15 +222,15 @@ typedef struct IOHIDDeviceInterface122
     CFRunLoopSourceRef (*getAsyncEventSource)(void * self);				\
     IOReturn (*createAsyncPort)(void * self, mach_port_t * port);			\
     mach_port_t (*getAsyncPort)(void * self);						\
-    IOReturn (*create)(void * self, UInt32 flags, UInt32 depth);			\
+    IOReturn (*create)(void * self, uint32_t flags, uint32_t depth);			\
     IOReturn (*dispose)(void * self);							\
-    IOReturn (*addElement)(void * self, IOHIDElementCookie elementCookie, UInt32 flags);\
+    IOReturn (*addElement)(void * self, IOHIDElementCookie elementCookie, uint32_t flags);\
     IOReturn (*removeElement)(void * self, IOHIDElementCookie elementCookie);		\
     Boolean (*hasElement)(void * self, IOHIDElementCookie elementCookie);		\
     IOReturn (*start)(void * self);							\
     IOReturn (*stop)(void * self);							\
     IOReturn (*getNextEvent)(void * self, IOHIDEventStruct * event,			\
-                                AbsoluteTime maxTime, UInt32 timeoutMS);		\
+                                AbsoluteTime maxTime, uint32_t timeoutMS);		\
     IOReturn (*setEventCallout)(void * self, IOHIDCallbackFunction callback,		\
                                 void * callbackTarget,  void * callbackRefcon);		\
     IOReturn (*getEventCallout)(void * self, IOHIDCallbackFunction * outCallback,	\
@@ -280,7 +263,7 @@ struct IOHIDQueueInterface
                                 IOHIDEventStruct * valueEvent);				\
     IOReturn (*getElementValue)(void * self, IOHIDElementCookie elementCookie,		\
                                 IOHIDEventStruct * outValueEvent);			\
-    IOReturn (*commit)(void * self, UInt32 timeoutMS, IOHIDCallbackFunction callback,	\
+    IOReturn (*commit)(void * self, uint32_t timeoutMS, IOHIDCallbackFunction callback,	\
                                 void * callbackTarget, void * callbackRefcon);		\
     IOReturn (*clear)(void * self)
 
@@ -342,7 +325,7 @@ typedef struct IOHIDDeviceInterface
     @param flags Flags to be passed down to the user client.
     @result Returns an IOReturn code.
 */
-    IOReturn (*open)(void * self, UInt32 flags);
+    IOReturn (*open)(void * self, uint32_t flags);
     
 /*! @function close
     @abstract Closes the device.
@@ -395,7 +378,7 @@ typedef struct IOHIDDeviceInterface
     IOReturn (*setElementValue)(void *	 			self,
                                 IOHIDElementCookie		elementCookie,
                                 IOHIDEventStruct *		valueEvent,
-                                UInt32 				timeoutMS,
+                                uint32_t 				timeoutMS,
                                 IOHIDElementCallbackFunction	callback,
                                 void * 				callbackTarget,
                                 void *				callbackRefcon);
@@ -416,7 +399,7 @@ typedef struct IOHIDDeviceInterface
     IOReturn (*queryElementValue)(void * 			self,
                                 IOHIDElementCookie		elementCookie,
                                 IOHIDEventStruct *		valueEvent,
-                                UInt32 				timeoutMS,
+                                uint32_t 				timeoutMS,
                                 IOHIDElementCallbackFunction	callback,
                                 void * 				callbackTarget,
                                 void *				callbackRefcon);
@@ -471,10 +454,10 @@ typedef struct IOHIDDeviceInterface121
 */
     IOReturn (*setReport)	(void * 			self,
                                 IOHIDReportType			reportType,
-                                UInt32				reportID,
+                                uint32_t				reportID,
                                 void *				reportBuffer,
-                                UInt32				reportBufferSize,
-                                UInt32 				timeoutMS,
+                                uint32_t				reportBufferSize,
+                                uint32_t 				timeoutMS,
                                 IOHIDReportCallbackFunction	callback,
                                 void * 				callbackTarget,
                                 void *				callbackRefcon);
@@ -494,10 +477,10 @@ typedef struct IOHIDDeviceInterface121
 */
     IOReturn (*getReport)	(void * 			self,
                                 IOHIDReportType			reportType,
-                                UInt32				reportID,
+                                uint32_t				reportID,
                                 void *				reportBuffer,
-                                UInt32 *			reportBufferSize,
-                                UInt32 				timeoutMS,
+                                uint32_t *			reportBufferSize,
+                                uint32_t 				timeoutMS,
                                 IOHIDReportCallbackFunction	callback,
                                 void * 				callbackTarget,
                                 void *				callbackRefcon);
@@ -549,7 +532,7 @@ typedef struct IOHIDDeviceInterface122
     IOReturn (*setInterruptReportHandlerCallback)(
                             void * 				self,
                             void *				reportBuffer,
-                            UInt32				reportBufferSize, 
+                            uint32_t				reportBufferSize, 
                             IOHIDReportCallbackFunction 	callback,
                             void * 				callbackTarget, 
                             void * 				callbackRefcon);
@@ -597,14 +580,16 @@ typedef struct IOHIDQueueInterface
     
 /*! @function create
     @abstract Creates the current queue. 
-    @param flags
+    @param flags Pass kIOHIDQueueOptionsTypeEnqueueAll option to 
+    force the IOHIDQueue to enqueue all events, relative or absolute, 
+    regardless of change.
     @param depth The maximum number of elements in the queue 
         before the oldest elements in the queue begin to be lost.
     @result Returns an IOReturn code. 
 */
     IOReturn (*create)(void * 			self, 
-                        UInt32 			flags,
-                        UInt32			depth);
+                        uint32_t 			flags,
+                        uint32_t			depth);
 
 /*! @function create
     @abstract Disposes of the current queue. 
@@ -622,7 +607,7 @@ typedef struct IOHIDQueueInterface
 */
     IOReturn (*addElement)(void * self,
                            IOHIDElementCookie elementCookie,
-                           UInt32 flags);
+                           uint32_t flags);
 
 /*! @function removeElement
     @abstract Removes an element from the queue.
@@ -669,7 +654,7 @@ typedef struct IOHIDQueueInterface
     IOReturn (*getNextEvent)(void * 			self,
                             IOHIDEventStruct *		event,
                             AbsoluteTime		maxTime,
-                            UInt32 			timeoutMS);
+                            uint32_t 			timeoutMS);
 
 /*! @function setEventCallout
     @abstract Sets the event callout to be called when the queue 
@@ -852,7 +837,7 @@ typedef struct IOHIDOutputTransactionInterface
     @result Returns an IOReturn code.
 */
     IOReturn (*commit)(void * 			self,
-                        UInt32 			timeoutMS,
+                        uint32_t 			timeoutMS,
                         IOHIDCallbackFunction   callback,
                         void * 			callbackTarget,
                         void *			callbackRefcon);
@@ -870,4 +855,4 @@ typedef struct IOHIDOutputTransactionInterface
 
 __END_DECLS
 
-#endif /* !_IOKIT_HID_IOHIDLIB_H_ */
+#endif /* !_IOKIT_HID_IOHIDLIBOBSOLETE_H_ */

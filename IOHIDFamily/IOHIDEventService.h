@@ -26,6 +26,8 @@
 #define _IOKIT_HID_IOHIDEVENTSERVICE_H
 
 #include <IOKit/IOService.h>
+#include <IOKit/IOWorkLoop.h>
+#include <IOKit/IOTimerEventSource.h>
 #include <IOKit/hidsystem/IOHIDTypes.h>
 #include <IOKit/hid/IOHIDInterface.h>
 #include <IOKit/hid/IOHIDElement.h>
@@ -63,6 +65,7 @@ class IOHIDEventService: public IOService
     friend class IOHIDPointing;
     friend class IOHIDKeyboard;
     friend class IOHIDConsumer;
+    friend class AppleEmbeddedKeyboard;
 
 private:
     IOHIDKeyboard *         _keyboardNub;
@@ -78,6 +81,10 @@ private:
 
 
     struct ExpansionData { 
+        IOWorkLoop *            workLoop;
+        IOTimerEventSource 	*   ejectTimerEventSource;
+        UInt32                  ejectState;
+        IOOptionBits            ejectOptions;
     };
     /*! @var reserved
         Reserved for future use.  (Internal use only)  */
@@ -110,6 +117,8 @@ private:
     IOFixed                 determineResolution ( IOHIDElement * element );
                                     
     static bool 			_publishNotificationHandler(void * target, void * ref, IOService * newService );
+
+    void                    ejectTimerCallback(IOTimerEventSource *sender);
     
 protected:
 
@@ -179,7 +188,7 @@ protected:
                                 AbsoluteTime                timeStamp,
                                 SInt32                      x,
                                 SInt32                      y,
-                                Bounds *                    bounds,
+                                IOGBounds *                 bounds,
                                 UInt32                      buttonState,
                                 bool                        inRange,
                                 SInt32                      tipPressure,
@@ -200,7 +209,7 @@ protected:
                                 SInt32                      x,
                                 SInt32                      y,
                                 SInt32                      z,
-                                Bounds *                    bounds,
+                                IOGBounds *                 bounds,
                                 UInt32                      buttonState,
                                 SInt32                      tipPressure,
                                 SInt32                      tipPressureMin,
