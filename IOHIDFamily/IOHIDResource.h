@@ -1,7 +1,7 @@
 /*
  * @APPLE_LICENSE_HEADER_START@
  * 
- * Copyright (c) 1999-2003 Apple Computer, Inc.  All Rights Reserved.
+ * Copyright (c) 2008 Apple, Inc.  All Rights Reserved.
  * 
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
@@ -20,27 +20,28 @@
  * 
  * @APPLE_LICENSE_HEADER_END@
  */
-#ifndef _IOHIDEVICE_PRIVATE_KEYS_H
-#define _IOHIDEVICE_PRIVATE_KEYS_H
 
-enum {
-    kAccelMouse                 = 0x0001,
-    kAccelScroll                = 0x0002,
-    kAbsoluteConvertMouse       = 0x0004,
-    kAccelScrollConvertPointer  = 0x0008
+#ifndef _IOHIDRESOURCE_H
+#define _IOHIDRESOURCE_H
+
+/*
+ * Kernel
+ */
+#if defined(KERNEL) && defined(__cplusplus)
+
+#include <IOKit/IOService.h>
+
+class IOHIDResource : public IOService
+{
+    OSDeclareDefaultStructors(IOHIDResource);
+
+public:
+	bool start(IOService *provider);
 };
 
-enum {
-    kScrollTypeContinuous       = 0x0001,
-    kScrollTypeZoom             = 0x0002,
-    kScrollTypeIgnored			= 0x0004,
-    kScrollTypeTouch			= 0x0008
-};
 
-#define kIOHIDEventServicePropertiesKey "HIDEventServiceProperties"
-#define kIOHIDTemporaryParametersKey    "HIDTemporaryParameters"
-#define kIOHIDDefaultParametersKey      "HIDDefaultParameters"
-#define kIOHIDDeviceParametersKey       "HIDDeviceParameters"
 
-#endif /* !_IOHIDEVICE_PRIVATE_KEYS_H */
+#endif /* defined(KERNEL) && defined(__cplusplus) */
+
+#endif /* !_IOHIDRESOURCE_H */
 

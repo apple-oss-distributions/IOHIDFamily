@@ -1,7 +1,7 @@
 /*
  * @APPLE_LICENSE_HEADER_START@
  * 
- * Copyright (c) 1999-2003 Apple Computer, Inc.  All Rights Reserved.
+ * Copyright (c) 2008 Apple, Inc.  All Rights Reserved.
  * 
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
@@ -20,27 +20,27 @@
  * 
  * @APPLE_LICENSE_HEADER_END@
  */
-#ifndef _IOHIDEVICE_PRIVATE_KEYS_H
-#define _IOHIDEVICE_PRIVATE_KEYS_H
 
-enum {
-    kAccelMouse                 = 0x0001,
-    kAccelScroll                = 0x0002,
-    kAbsoluteConvertMouse       = 0x0004,
-    kAccelScrollConvertPointer  = 0x0008
-};
+#include "IOHIDResource.h"
+#include <IOKit/IOLib.h>
 
-enum {
-    kScrollTypeContinuous       = 0x0001,
-    kScrollTypeZoom             = 0x0002,
-    kScrollTypeIgnored			= 0x0004,
-    kScrollTypeTouch			= 0x0008
-};
+#define super IOService
 
-#define kIOHIDEventServicePropertiesKey "HIDEventServiceProperties"
-#define kIOHIDTemporaryParametersKey    "HIDTemporaryParameters"
-#define kIOHIDDefaultParametersKey      "HIDDefaultParameters"
-#define kIOHIDDeviceParametersKey       "HIDDeviceParameters"
+/****************************************************************************/
+/*					Default constructors/destructor							*/
+/****************************************************************************/
+OSDefineMetaClassAndStructors( IOHIDResource, IOService )
 
-#endif /* !_IOHIDEVICE_PRIVATE_KEYS_H */
+
+/****************************************************************************/
+/*							Override start to register						*/
+/****************************************************************************/
+bool IOHIDResource::start(IOService *provider)
+{
+    bool res = super::start(provider);
+
+    registerService(kIOServiceSynchronous);
+
+	return res;
+}
 

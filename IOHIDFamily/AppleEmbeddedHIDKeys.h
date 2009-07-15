@@ -1,4 +1,5 @@
 /*
+ *
  * @APPLE_LICENSE_HEADER_START@
  * 
  * Copyright (c) 1999-2003 Apple Computer, Inc.  All Rights Reserved.
@@ -20,27 +21,22 @@
  * 
  * @APPLE_LICENSE_HEADER_END@
  */
-#ifndef _IOHIDEVICE_PRIVATE_KEYS_H
-#define _IOHIDEVICE_PRIVATE_KEYS_H
 
-enum {
-    kAccelMouse                 = 0x0001,
-    kAccelScroll                = 0x0002,
-    kAbsoluteConvertMouse       = 0x0004,
-    kAccelScrollConvertPointer  = 0x0008
-};
+#ifndef _IOKIT_HID_EMBEDDEDHIDKEYS_H_
+#define _IOKIT_HID_EMBEDDEDHIDKEYS_H_
 
-enum {
-    kScrollTypeContinuous       = 0x0001,
-    kScrollTypeZoom             = 0x0002,
-    kScrollTypeIgnored			= 0x0004,
-    kScrollTypeTouch			= 0x0008
-};
+#include <sys/cdefs.h>
 
-#define kIOHIDEventServicePropertiesKey "HIDEventServiceProperties"
-#define kIOHIDTemporaryParametersKey    "HIDTemporaryParameters"
-#define kIOHIDDefaultParametersKey      "HIDDefaultParameters"
-#define kIOHIDDeviceParametersKey       "HIDDeviceParameters"
+__BEGIN_DECLS
 
-#endif /* !_IOHIDEVICE_PRIVATE_KEYS_H */
+#define kIOHIDThresholdXKey                     "ThresholdX"
+#define kIOHIDThresholdYKey                     "ThresholdY"
+#define kIOHIDThresholdZKey                     "ThresholdZ"
+#define kIOHIDThresholdPeriodKey                "ThresholdPeriod"
 
+
+#define kIOHIDAccelerometerShakeKey             "Shake"
+
+__END_DECLS
+
+#endif /* !_IOKIT_HID_EMBEDDEDHIDKEYS_H_ */

@@ -252,6 +252,10 @@ bool IOHIPointing::start(IOService * provider)
 
   if (!getProperty(kIOHIDScrollAccelerationTypeKey))
     setProperty(kIOHIDScrollAccelerationTypeKey, kIOHIDMouseScrollAccelerationKey);
+	
+	if (!getProperty(kIOHIDDisallowRemappingOfPrimaryClickKey))
+		if (provider->getProperty(kIOHIDDisallowRemappingOfPrimaryClickKey))
+			setProperty(kIOHIDDisallowRemappingOfPrimaryClickKey, provider->getProperty(kIOHIDDisallowRemappingOfPrimaryClickKey));
 
   /*
    * RY: Publish a property containing the button Count.  This will
@@ -283,9 +287,9 @@ bool IOHIPointing::start(IOService * provider)
    * life).  Register ourselves as a nub to kick off matching.
    */
 
-  registerService(kIOServiceSynchronous);
+	registerService(kIOServiceSynchronous);
 
-  return true;
+	return true;
 }
 
 void IOHIPointing::free()
@@ -564,6 +568,16 @@ void IOHIPointing::setPointingMode(UInt32 accelerateMode)
 UInt32 IOHIPointing::getPointingMode()
 {
     return _accelerateMode;
+}
+
+void IOHIPointing::setScrollType(UInt32 scrollType)
+{
+    _scrollType = scrollType;
+}
+
+UInt32 IOHIPointing::getScrollType()
+{
+    return _scrollType;
 }
 
 void IOHIPointing::scalePointer(int * dxp, int * dyp)
@@ -1071,10 +1085,11 @@ bool IOHIPointing::updateProperties( void )
 
 IOReturn IOHIPointing::setParamProperties( OSDictionary * dict )
 {
-    OSData *		data;
-    OSNumber * 		number;
-    OSString *  	pointerAccelKey;
-    OSString *      scrollAccelKey;
+    OSData			*data;
+    OSNumber		*number;
+    OSBoolean		*booleanValue;
+    OSString		*pointerAccelKey;
+    OSString		*scrollAccelKey;
     IOReturn		err = kIOReturnSuccess;
     bool		updated = false;
     UInt32		value;
@@ -1196,19 +1211,34 @@ IOReturn IOHIPointing::setParamProperties( OSDictionary * dict )
         (data = OSDynamicCast(OSData, dict->getObject(kIOHIDPointerButtonMode))))
 	{
 		value = (number) ? number->unsigned32BitValue() : 
-                                            *((UInt32 *) (data->getBytesNoCopy())) ;
-        
+                                            *((UInt32 *) (data->getBytesNoCopy()));
+		
 		if (getProperty(kIOHIDPointerButtonCountKey))
 		{
-			if (value == kIOHIDButtonMode_BothLeftClicks)
-				_buttonMode = NX_OneButton;
-			else if (value == kIOHIDButtonMode_ReverseLeftRightClicks)
-				_buttonMode = NX_LeftButton;
-			else if (value == kIOHIDButtonMode_EnableRightClick)
-				_buttonMode = NX_RightButton;
-			else
-				_buttonMode = value;
-
+			// vtn3: rdar://problem/5816671
+			booleanValue = OSDynamicCast(OSBoolean, getProperty(kIOHIDDisallowRemappingOfPrimaryClickKey));
+			if (NULL == booleanValue) {
+				booleanValue = kOSBooleanFalse;
+			}
+			
+			switch (value) {
+				case kIOHIDButtonMode_BothLeftClicks:
+					_buttonMode = NX_OneButton;
+					break;
+					
+				case kIOHIDButtonMode_EnableRightClick:
+					_buttonMode = NX_RightButton;
+					break;
+				
+				case kIOHIDButtonMode_ReverseLeftRightClicks:
+					// vtn3: rdar://problem/5816671
+					_buttonMode = booleanValue->isTrue() ? _buttonMode : NX_LeftButton;
+					break;
+					
+				default:
+					// vtn3: rdar://problem/5816671
+					_buttonMode = booleanValue->isTrue() ? _buttonMode : value;
+			}
 			updated = true;
 		}
     }

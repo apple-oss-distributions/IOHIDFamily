@@ -2,7 +2,7 @@
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
- * Copyright (c) 1999-2003 Apple Computer, Inc.  All Rights Reserved.
+ * Copyright (c) 1999-2009 Apple Computer, Inc.  All Rights Reserved.
  * 
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
@@ -135,7 +135,7 @@ private:
                                 
     IOFixed                 determineResolution ( IOHIDElement * element );
                                     
-    static bool 			_publishNotificationHandler(void * target, void * ref, IOService * newService );
+    static bool 			_publishMatchingNotificationHandler(void * target, void * ref, IOService * newService, IONotifier * notifier);
 
     void                    ejectTimerCallback(IOTimerEventSource *sender);
 
@@ -144,7 +144,8 @@ private:
 #if TARGET_OS_EMBEDDED
     void                    debuggerTimerCallback(IOTimerEventSource *sender);
 #endif
-    
+	void					calculateCapsLockDelay();
+
 protected:
 
     virtual void            free();
@@ -294,6 +295,7 @@ protected:
                                 IOOptionBits                options                         = 0 );
 
 public:
+    bool                    readyForReports();
 
     virtual bool            init(OSDictionary * properties = 0);
 

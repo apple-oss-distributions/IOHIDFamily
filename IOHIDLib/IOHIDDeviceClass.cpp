@@ -748,18 +748,17 @@ IOReturn IOHIDDeviceClass::getElementValue(IOHIDElementRef element, IOHIDValueRe
     //  to get the current value.
     if ((kr == kIOReturnSuccess) && ((options & kHIDGetElementValuePreventPoll) == 0) && ((options & kHIDGetElementValueForcePoll) || ((IOHIDElementGetType(element) == kIOHIDElementTypeFeature) && (generation == 0))))
     {        
-        IOReturn    kr = kIOReturnBadArgument;
         uint64_t    input = (uint64_t) IOHIDElementGetCookie(element);
         size_t    outputCount = 0;
             
         allChecks();
 
-        kr = IOConnectCallStructMethod(fConnection, kIOHIDLibUserClientUpdateElementValues, &input, 1, 0, &outputCount); 
-                
-        if (kr == kIOReturnSuccess)
-            kr = getCurrentElementValueAndGeneration(element, pEvent);        
-    }    
-    
+		kr = IOConnectCallScalarMethod(fConnection, kIOHIDLibUserClientUpdateElementValues, &input, 1, 0, 0); 
+				
+		if (kr == kIOReturnSuccess)
+			kr = getCurrentElementValueAndGeneration(element, pEvent);        
+	}    
+ 
     return kr;
 }
 
@@ -1514,12 +1513,8 @@ void IOHIDDeviceClass::_hidReportHandlerCallback(void * refcon, IOReturn result,
             bcopy(IOHIDValueGetBytePtr(event), self->fInputReportBuffer, size);
         }
         
-        CFRelease(event);
-
-        if (!self->fInputReportCallback)
-            return;
-            
-        (self->fInputReportCallback)(
+        if (self->fInputReportCallback)            
+            (self->fInputReportCallback)(
                                         self->fInputReportRefcon, 
                                         result, 
                                         &(self->fHIDDevice),
@@ -1527,6 +1522,8 @@ void IOHIDDeviceClass::_hidReportHandlerCallback(void * refcon, IOReturn result,
                                         IOHIDElementGetReportID(IOHIDValueGetElement(event)),
                                         self->fInputReportBuffer,
                                         size);
+
+        CFRelease(event);
     }
 }
 

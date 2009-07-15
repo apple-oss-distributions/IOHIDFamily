@@ -159,7 +159,9 @@ OSString * IOHIDDeviceShim::newTransportString() const
 			break;
 		
 		default:
-			returnString = (OSString*)_device->copyProperty(kIOHIDTransportKey);
+			returnString = _device ?
+								(OSString*)_device->copyProperty(kIOHIDTransportKey) :
+								NULL;	
 			break;
     }      
     
@@ -243,7 +245,7 @@ OSString * IOHIDDeviceShim::newSerialNumberString() const
 	if (_device) {
 		if (number = OSDynamicCast(OSNumber, _device->getProperty("iSerialNumber")))
 		{
-			sprintf(str, "%d", number->unsigned32BitValue());
+			snprintf(str, sizeof (str), "%d", number->unsigned32BitValue());
 			str[32] = 0;
 			return OSString::withCString(str);
 		} 

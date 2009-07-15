@@ -1,7 +1,7 @@
 /*
  * @APPLE_LICENSE_HEADER_START@
  * 
- * Copyright (c) 1999-2003 Apple Computer, Inc.  All Rights Reserved.
+ * Copyright (c) 1999-2009 Apple Computer, Inc.  All Rights Reserved.
  * 
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
@@ -32,6 +32,7 @@
 #include "IOHIDSystem.h"
 #include "IOHIKeyboard.h"
 #include "IOHIDKeyboardDevice.h"
+#include "IOHIDFamilyTrace.h"
 
 //************************************************************************
 // KeyboardReserved
@@ -58,27 +59,38 @@ static OSArray *gKeyboardReservedArray = OSArray::withCapacity(4);
 static KeyboardReserved * GetKeyboardReservedStructEventForService(IOHIKeyboard *service, UInt32 * index = 0)
 {
     KeyboardReserved 	* retVal    = 0;
-    OSData              * data      = 0;
-    UInt32              count       = 0;
-    UInt32              i           = 0;
-    
-    if (gKeyboardReservedArray)
-    {
-        count = gKeyboardReservedArray->getCount();
-        
-        for(i=0; i<count; i++)
-        {
-            if ( (data = (OSData *)gKeyboardReservedArray->getObject(i)) &&
-                 (retVal = (KeyboardReserved *)data->getBytesNoCopy()) &&
-                 (retVal->service == service) )
-            {
-                if ( index ) *index = i; 
-                return retVal;
-            }        
+    if (gKeyboardReservedArray) {
+        OSCollectionIterator    * iterator  = 0;
+        iterator = OSCollectionIterator::withCollection(gKeyboardReservedArray);
+        if (iterator) {
+            bool done = false;
+            while (!done) {
+                OSObject * obj = 0;
+                while (!done && (NULL != (obj = iterator->getNextObject()))) {
+                    OSData * data = OSDynamicCast(OSData, obj);
+                    if (data) {
+                        retVal = (KeyboardReserved *)data->getBytesNoCopy();
+                        if (retVal && (retVal->service == service)) {
+                            if (index)
+                                *index = gKeyboardReservedArray->getNextIndexOfObject(obj, 0);
+                            done = true;
+                        }
+                        else {
+                            retVal = 0;
+                        }
+                    }
+                }
+                if (iterator->isValid()) {
+                    done = true;
+                }
+                else {
+                    iterator->reset();
+                }
+            }
+            iterator->release();
         }
     }
-    
-    return NULL;
+    return retVal;
 }
 
 static void AppendNewKeyboardReservedStructForService(IOHIKeyboard *service)
@@ -138,14 +150,6 @@ bool IOHIKeyboard::init(OSDictionary * properties)
 
   bzero(_keyState, _keyStateSize);
   
-  AppendNewKeyboardReservedStructForService(this);
-  KeyboardReserved * tempReservedStruct = GetKeyboardReservedStructEventForService(this);
-
-  if (tempReservedStruct)
-  {
-    tempReservedStruct->repeat_thread_call = thread_call_allocate(_autoRepeat, this);
-  }
-
   return true;
 }
 
@@ -158,9 +162,36 @@ bool IOHIKeyboard::start(IOService * provider)
    * life).  Register ourselves as a nub to kick off matching.
    */
 
+  AppendNewKeyboardReservedStructForService(this);
+  KeyboardReserved * tempReservedStruct = GetKeyboardReservedStructEventForService(this);
+
+  if (tempReservedStruct)
+  {
+    tempReservedStruct->repeat_thread_call = thread_call_allocate(_autoRepeat, this);
+  }
+
   registerService(kIOServiceSynchronous);
 
   return true;
+}
+
+void IOHIKeyboard::stop(IOService * provider)
+{
+	super::stop(provider);
+
+	KeyboardReserved *tempReservedStruct = GetKeyboardReservedStructEventForService(this);        
+
+	if (tempReservedStruct) {
+		thread_call_cancel(tempReservedStruct->repeat_thread_call);
+		thread_call_free(tempReservedStruct->repeat_thread_call);
+		tempReservedStruct->repeat_thread_call = NULL;
+
+		if ( tempReservedStruct->keyboardNub )
+			tempReservedStruct->keyboardNub->release();
+		tempReservedStruct->keyboardNub = NULL;
+		
+		RemoveKeyboardReservedStructForService(this);
+	}
 }
 
 void IOHIKeyboard::free()
@@ -177,23 +208,12 @@ void IOHIKeyboard::free()
 
     if ( _keyMap ) {
         _keyMap->release();
+        _keyMap = 0;
     }
 
     if( _keyState )
         IOFree( _keyState, _keyStateSize);
 
-    KeyboardReserved *tempReservedStruct = GetKeyboardReservedStructEventForService(this);        
-    
-    if (tempReservedStruct) {
-        thread_call_cancel(tempReservedStruct->repeat_thread_call);
-        thread_call_free(tempReservedStruct->repeat_thread_call);
-
-        if ( tempReservedStruct->keyboardNub )
-            tempReservedStruct->keyboardNub->release();
-        
-        RemoveKeyboardReservedStructForService(this);
-    }
-    
     // RY: MENTAL NOTE Do this last
     if ( lock )
     {
@@ -283,7 +303,7 @@ IOReturn IOHIKeyboard::setParamProperties( OSDictionary * dict )
 			err = kIOReturnBadArgument;
 		} 
     }
-    if ( number = OSDynamicCast(OSNumber, dict->getObject(kIOHIDSubinterfaceIDKey)) )
+    if (NULL != (number = OSDynamicCast(OSNumber, dict->getObject(kIOHIDSubinterfaceIDKey))))
     {
         _deviceType = number->unsigned32BitValue();
         updated = true;
@@ -324,8 +344,10 @@ bool IOHIKeyboard::resetKeyboard()
 
     IOLockLock( _deviceLock);
 
-    if ( _keyMap )
-		_keyMap->release();
+    if ( _keyMap ) {
+        _keyMap->release();
+        _keyMap = 0;
+    }
 
     // Set up default keymapping.
     defaultKeymap = defaultKeymapOfLength(&defaultKeymapLength);
@@ -384,6 +406,7 @@ void IOHIKeyboard::scheduleAutoRepeat()
         AbsoluteTime deadline;
         clock_absolutetime_interval_to_deadline(_downRepeatTime, &deadline);
         if (tempReservedStruct) {
+            IOHID_DEBUG(kIOHIDDebugCode_KeyboardCapsThreadTrigger, this, __OSAbsoluteTime(deadline), tempReservedStruct->repeat_thread_call, 0);
             thread_call_enter_delayed(tempReservedStruct->repeat_thread_call, deadline);
         }
 	_calloutPending = true;
@@ -394,6 +417,7 @@ void IOHIKeyboard::_autoRepeat(thread_call_param_t arg,
                                thread_call_param_t)         /* thread_call_func_t */
 {
     IOHIKeyboard *self = (IOHIKeyboard *) arg;
+    IOHID_DEBUG(kIOHIDDebugCode_KeyboardCapsThreadActive, self, self ? self->_codeToRepeat : 0, 0, 0);
     self->autoRepeat();
 }
 
