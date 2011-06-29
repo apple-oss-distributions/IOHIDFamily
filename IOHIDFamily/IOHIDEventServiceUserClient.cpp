@@ -29,7 +29,7 @@
 
 #define super IOUserClient
 
-OSDefineMetaClassAndStructors( IOHIDEventServiceUserClient, super )
+OSDefineMetaClassAndStructors( IOHIDEventServiceUserClient, IOUserClient )
 
 //==============================================================================
 // IOHIDEventServiceUserClient::sMethods
@@ -78,9 +78,10 @@ IOReturn IOHIDEventServiceUserClient::clientClose( void )
    
    if (_owner) {	
         _owner->close(this, _options);
-        detach(_owner);
     }
 
+    terminate();
+    
     return kIOReturnSuccess;
 }
 
@@ -170,7 +171,7 @@ bool IOHIDEventServiceUserClient::initWithTask(task_t owningTask, void * securit
     
     task_reference (_client);
 
-    _queue = IOHIDEventServiceQueue::withCapacity(1024);
+    _queue = IOHIDEventServiceQueue::withCapacity(4096);
     
     if ( !_queue )
         return false;

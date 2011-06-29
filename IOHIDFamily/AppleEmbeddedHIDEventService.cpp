@@ -30,7 +30,7 @@
 // AppleEmbeddedHIDEventService class
 #define super IOHIDEventService
 
-OSDefineMetaClassAndAbstractStructors( AppleEmbeddedHIDEventService, super )
+OSDefineMetaClassAndAbstractStructors( AppleEmbeddedHIDEventService, IOHIDEventService )
 
 //====================================================================================================
 // AppleEmbeddedHIDEventService::handleStart
@@ -71,9 +71,9 @@ void AppleEmbeddedHIDEventService::dispatchAccelerometerEvent(AbsoluteTime times
 //====================================================================================================
 // AppleEmbeddedHIDEventService::dispatchGyroEvent
 //====================================================================================================
-void AppleEmbeddedHIDEventService::dispatchGyroEvent(AbsoluteTime timestamp, IOFixed x, IOFixed y, IOFixed z, IOHIDGyroType type, IOHIDGyroSubType subType, IOOptionBits options)
+void AppleEmbeddedHIDEventService::dispatchGyroEvent(AbsoluteTime timestamp, IOFixed x, IOFixed y, IOFixed z, IOHIDGyroType type, IOHIDGyroSubType subType, IOFixed qx, IOFixed qy, IOFixed qz, IOFixed qw, IOOptionBits options)
 {
-    IOHIDEvent * event = IOHIDEvent::gyroEvent(timestamp, x, y, z, type, subType, options);
+    IOHIDEvent * event = IOHIDEvent::gyroEvent(timestamp, x, y, z, type, subType, qx, qy, qz, qw, options);
     
     if ( event ) {
         dispatchEvent(event);
@@ -81,6 +81,18 @@ void AppleEmbeddedHIDEventService::dispatchGyroEvent(AbsoluteTime timestamp, IOF
     }
 }
 
+//====================================================================================================
+// AppleEmbeddedHIDEventService::dispatchCompassEvent
+//====================================================================================================
+void AppleEmbeddedHIDEventService::dispatchCompassEvent(AbsoluteTime timestamp, IOFixed x, IOFixed y, IOFixed z, IOHIDCompassType type, IOOptionBits options)
+{
+    IOHIDEvent * event = IOHIDEvent::compassEvent(timestamp, x, y, z, type, options);
+    
+    if ( event ) {
+        dispatchEvent(event);
+        event->release();
+    }
+}
 
 //====================================================================================================
 // AppleEmbeddedHIDEventService::dispatchProximityEvent

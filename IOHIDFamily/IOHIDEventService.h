@@ -33,6 +33,7 @@
 #include <IOKit/hidsystem/IOHIDTypes.h>
 #include <IOKit/hid/IOHIDInterface.h>
 #include <IOKit/hid/IOHIDElement.h>
+#include <IOKit/hid/IOHIDKeys.h>
 
 #if TARGET_OS_EMBEDDED
     #include <IOKit/hid/IOHIDEvent.h>
@@ -48,11 +49,17 @@ enum
 enum
 {
     kHIDDispatchOptionScrollNoAcceleration             = 0x01,
+
+    kHIDDispatchOptionScrollMomentumAny                = 0x0e,
     kHIDDispatchOptionScrollMomentumContinue           = 0x02,
     kHIDDispatchOptionScrollMomentumStart              = 0x04,
     kHIDDispatchOptionScrollMomentumEnd                = 0x08,
-
-    kHIDDispatchOptionScrollMomentumAny                = kHIDDispatchOptionScrollMomentumContinue | kHIDDispatchOptionScrollMomentumStart | kHIDDispatchOptionScrollMomentumEnd
+    
+    kHIDDispatchOptionPhaseAny                         = 0xf0,
+    kHIDDispatchOptionPhaseBegan                       = 0x10,
+    kHIDDispatchOptionPhaseChanged                     = 0x20,
+    kHIDDispatchOptionPhaseEnded                       = 0x40,
+    kHIDDispatchOptionPhaseCanceled                    = 0x80,
 };
 
 enum 
@@ -104,12 +111,19 @@ private:
         UInt32                  capsState;
         IOOptionBits            capsOptions;
         OSArray *               deviceUsagePairs;
+        IOCommandGate       *   commandGate;
         
 #if TARGET_OS_EMBEDDED
         OSDictionary *          clientDict;
         UInt32                  debuggerMask;
         UInt32                  startDebuggerMask;
         IOTimerEventSource *    debuggerTimerEventSource;
+        bool                    shouldSwapISO;
+        
+        bool                    previousRangeState;
+        SInt32                  previousX;
+        SInt32                  previousY;
+        bool                    prevousTouchState;
 #endif
     };
     /*! @var reserved
@@ -152,6 +166,8 @@ private:
     void                    debuggerTimerCallback(IOTimerEventSource *sender);
 #endif
 	void					calculateCapsLockDelay();
+    
+    void                    calculateStandardType();
 
 protected:
 
@@ -384,6 +400,15 @@ public:
     OSMetaClassDeclareReservedUnused(IOHIDEventService, 29);
     OSMetaClassDeclareReservedUnused(IOHIDEventService, 30);
     OSMetaClassDeclareReservedUnused(IOHIDEventService, 31);
+    
+#if TARGET_OS_EMBEDDED
+public:
+    virtual void            close( IOService * forClient, IOOptionBits options = 0 );
+    
+private:
+    bool                    openGated( IOService *client, IOOptionBits options, void *context, Action action);
+    void                    closeGated( IOService * forClient, IOOptionBits options = 0 );
+#endif
 
 };
 

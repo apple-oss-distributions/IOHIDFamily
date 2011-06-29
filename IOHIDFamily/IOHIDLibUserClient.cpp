@@ -29,6 +29,7 @@
 #include <kern/task.h>
 #include <mach/port.h>
 #include <mach/message.h>
+#include <mach/mach_port.h>
 #include <IOKit/IOCommandGate.h>
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
@@ -41,6 +42,9 @@
 #include "IOHIDDevice.h"
 #include "IOHIDEventQueue.h"
 
+__BEGIN_DECLS
+#include <ipc/ipc_port.h>
+__END_DECLS
 
 #define super IOUserClient
 
@@ -155,6 +159,8 @@ sMethods[kIOHIDLibUserClientNumCommands] = {
 	}
 };
 
+#define kIOHIDLibClientExtendedData     "ExtendedData"
+
 static void deflate_vec(uint32_t *dp, uint32_t d, const uint64_t *sp, uint32_t s)
 {
 	if (d > s)
@@ -165,12 +171,16 @@ static void deflate_vec(uint32_t *dp, uint32_t d, const uint64_t *sp, uint32_t s
 }
 
 
-bool IOHIDLibUserClient::
-initWithTask(task_t owningTask, void * /* security_id */, UInt32 /* type */)
+bool IOHIDLibUserClient::initWithTask(task_t owningTask, void * /* security_id */, UInt32 /* type */)
 {
 	if (!super::init())
-	return false;
+		return false;
 
+    if (IOUserClient::clientHasPrivilege(owningTask, kIOClientPrivilegeAdministrator) != kIOReturnSuccess) {
+		// Preparing for extended data. Set a temporary key.
+        setProperty(kIOHIDLibClientExtendedData, true);
+    }
+    
 	fClient = owningTask;
 	task_reference (fClient);
 	
@@ -180,6 +190,7 @@ initWithTask(task_t owningTask, void * /* security_id */, UInt32 /* type */)
 	fQueueMap = OSArray::withCapacity(4);
 	if (!fQueueMap)
 		return false;
+    
 	return true;
 }
 
@@ -189,13 +200,13 @@ IOReturn IOHIDLibUserClient::clientClose(void)
 		fGate->runAction(OSMemberFunctionCast(IOCommandGate::Action, this, &IOHIDLibUserClient::cleanupGated));
 		terminate();
 	}
-	
+    
 	return kIOReturnSuccess;
 }
 
 void IOHIDLibUserClient::cleanupGated(void)
 {
-   if (fClient) {
+    if (fClient) {
 		task_deallocate(fClient);
 		fClient = 0;
 	}
@@ -228,9 +239,10 @@ void IOHIDLibUserClient::cleanupGated(void)
 
 bool IOHIDLibUserClient::start(IOService *provider)
 {
+    OSDictionary *matching = NULL;
 	if (!super::start(provider))
 		return false;
-
+    
 	fNub = OSDynamicCast(IOHIDDevice, provider);
 	if (!fNub)
 		return false;
@@ -238,7 +250,7 @@ bool IOHIDLibUserClient::start(IOService *provider)
 	fWL = getWorkLoop();
 	if (!fWL)
 		return false;
-    
+
 	fWL->retain();
     
     OSNumber *primaryUsage = OSDynamicCast(OSNumber, fNub->getProperty(kIOHIDPrimaryUsageKey));
@@ -267,11 +279,14 @@ bool IOHIDLibUserClient::start(IOService *provider)
 	fWL->addEventSource(fResourceES);
 
 	// Get notified everytime Root properties change
+    matching = serviceMatching("IOResources");
 	fResourceNotification = addMatchingNotification(
 		gIOPublishNotification,
-		serviceMatching("IOResources"),
+        matching,
 		OSMemberFunctionCast(IOServiceMatchingNotificationHandler, this, &IOHIDLibUserClient::resourceNotification),
 		this);
+    matching->release();
+    matching = NULL;
 					
 	if ( !fResourceNotification )
 		goto ABORT_START;
@@ -458,11 +473,11 @@ IOReturn IOHIDLibUserClient::open(IOOptionBits options)
 	if (ret != kIOReturnSuccess)
 		return ret;
 
-	if (!fNub->IOService::open(this, options))
+	if (!fNub->open(this, options))
 		return kIOReturnExclusiveAccess;
 		
 	fCachedOptionBits = options;
-
+    
 	fCachedConsoleUsersSeed = 0;
 	resourceNotificationGated();
 
@@ -484,7 +499,7 @@ IOReturn IOHIDLibUserClient::close()
 	fCachedOptionBits = 0;
 
 	// @@@ gvdl: release fWakePort leak them for the time being
-
+    
 	return kIOReturnSuccess;
 }
 
@@ -494,7 +509,7 @@ IOHIDLibUserClient::didTerminate( IOService * provider, IOOptionBits options, bo
 	if (fGate) {
 		fGate->runAction(OSMemberFunctionCast(IOCommandGate::Action, this, &IOHIDLibUserClient::cleanupGated));
 	}
-	
+    
 	return super::didTerminate(provider, options, defer);
 }
 
@@ -533,7 +548,16 @@ void IOHIDLibUserClient::free()
         IOFree(fValidMessage, sizeof (struct _notifyMsg));
         fValidMessage = NULL;
     }
-    
+
+    if (fWakePort != MACH_PORT_NULL) {
+        ipc_port_release_send(fWakePort);
+        fWakePort = MACH_PORT_NULL;
+    }
+
+    if (fValidPort != MACH_PORT_NULL) {
+        ipc_port_release_send(fValidPort);
+        fValidPort = MACH_PORT_NULL;
+    }
 	super::free();
 }
 
@@ -576,15 +600,23 @@ IOReturn IOHIDLibUserClient::registerNotificationPort(mach_port_t port, UInt32 t
 	}
 }
 
-IOReturn IOHIDLibUserClient::registerNotificationPortGated(mach_port_t port, UInt32 type, UInt32	refCon)
+IOReturn IOHIDLibUserClient::registerNotificationPortGated(mach_port_t port, UInt32 type, UInt32 refCon __unused)
 {
 	IOReturn kr = kIOReturnSuccess;
 	
 	switch ( type ) {
 		case kIOHIDLibUserClientAsyncPortType:
+            if (fWakePort != MACH_PORT_NULL) {
+                ipc_port_release_send(fWakePort);
+                fWakePort = MACH_PORT_NULL;
+            }
 			fWakePort = port;
 			break;
 		case kIOHIDLibUserClientDeviceValidPortType:
+            if (fValidPort != MACH_PORT_NULL) {
+                ipc_port_release_send(fValidPort);
+                fValidPort = MACH_PORT_NULL;
+            }
 			fValidPort = port;
 
 			static struct _notifyMsg init_msg = { {
@@ -1108,9 +1140,11 @@ IOReturn IOHIDLibUserClient::getReport(void *reportBuffer, uint32_t *pOutsize, I
 	IOReturn				ret;
 	IOMemoryDescriptor *	mem;
 		
-	mem = IOMemoryDescriptor::withAddress(reportBuffer, *pOutsize, kIODirectionIn);
+	//mem = IOBufferMemoryDescriptor::withBytes(reportBuffer, *pOutsize, kIODirectionIn);
+	mem = IOBufferMemoryDescriptor::withCapacity(*pOutsize, kIODirectionIn);
 	if(mem) {
 		ret = getReport(mem, pOutsize, reportType, reportID, timeout, completion);
+		mem->readBytes(0, reportBuffer, *pOutsize);
 		mem->release();
 	}
 	else
@@ -1121,9 +1155,12 @@ IOReturn IOHIDLibUserClient::getReport(void *reportBuffer, uint32_t *pOutsize, I
 
 IOReturn IOHIDLibUserClient::getReport(IOMemoryDescriptor * mem, uint32_t * pOutsize, IOHIDReportType reportType, uint32_t reportID, uint32_t timeout, IOHIDCompletion * completion)
 {
-	IOReturn			ret;
-		
-	if (fNub && !isInactive()) {
+	IOReturn			ret = kIOReturnNoMemory;
+	
+	if (*pOutsize > 0x7ffffff) {
+		IOLog("IOHIDLibUserClient::getReport called with an irrationally large output size: %lu\n", (long unsigned) *pOutsize);
+	}
+	else if (fNub && !isInactive()) {
 		ret = mem->prepare();
 		if(ret == kIOReturnSuccess)
 			if (completion) {
@@ -1216,26 +1253,58 @@ IOReturn IOHIDLibUserClient::setReport(IOMemoryDescriptor * mem, IOHIDReportType
 
 	if (fNub && !isInactive()) {
 		ret = mem->prepare();
-		if(ret == kIOReturnSuccess)
-			if ( completion ) {
-				AsyncParam * pb = (AsyncParam *)completion->parameter;
-				pb->fMax		= mem->getLength();
-				pb->fMem		= mem;
-				pb->reportType	= reportType;
+		if(ret == kIOReturnSuccess) {
+            OSArray *extended = OSDynamicCast(OSArray, getProperty(kIOHIDLibClientExtendedData));
+            if (extended && extended->getCount()) {
+                OSCollectionIterator *itr = OSCollectionIterator::withCollection(extended);
+                if (itr) {
+                    bool done = false;
+                    while (!done) {
+                        OSObject *obj;
+                        while (!done && (NULL != (obj = itr->getNextObject()))) {
+                            OSNumber *num = OSDynamicCast(OSNumber, obj);
+                            if (num && (num->numberOfBits() <= 64)) {
+                                if (num->unsigned64BitValue() == reportID) {
+                                	// Block
+                                    done = true;
+                                    ret = kIOReturnNotPrivileged;
+                                }
+                            }
+                        }
+                        if (itr->isValid()) {
+                        	// Do not block
+                            done = true;
+                        }
+                        else {
+                        	// Someone changed the array. Check again.
+                            itr->reset();
+                        }
+                    }
+                    itr->release();
+                }
+            }
+            if (ret == kIOReturnSuccess) {
+                if ( completion ) {
+                    AsyncParam * pb = (AsyncParam *)completion->parameter;
+                    pb->fMax		= mem->getLength();
+                    pb->fMem		= mem;
+                    pb->reportType	= reportType;
 
-				mem->retain();
+                    mem->retain();
 
-				ret = fNub->setReport(mem, reportType, reportID, timeout, completion);
-			}
-			else {
-				ret = fNub->setReport(mem, reportType, reportID);
-					
-				// make sure the element values are updated.
-				if (ret == kIOReturnSuccess)
-					fNub->handleReport(mem, reportType, kIOHIDReportOptionNotInterrupt);
-				
-				mem->complete();
-			}
+                    ret = fNub->setReport(mem, reportType, reportID, timeout, completion);
+                }
+                else {
+                    ret = fNub->setReport(mem, reportType, reportID);
+                        
+                    // make sure the element values are updated.
+                    if (ret == kIOReturnSuccess)
+                        fNub->handleReport(mem, reportType, kIOHIDReportOptionNotInterrupt);
+                    
+                    mem->complete();
+                }
+            }
+        }
 	}
 	else
 		ret = kIOReturnNotAttached;
@@ -1334,3 +1403,23 @@ u_int IOHIDLibUserClient::getNextTokenForToken(u_int token)
 
 // rdar://5957582 end
 
+bool
+IOHIDLibUserClient::attach(IOService * provider)
+{
+    if (!super::attach(provider)) {
+        return false;
+    }
+    if (provider && getProperty(kIOHIDLibClientExtendedData)) {
+        // Check for extended data
+        OSArray *extended = OSDynamicCast(OSArray, provider->getProperty(kIOHIDLibClientExtendedData, gIOServicePlane));
+        if (extended && extended->getCount()) {
+            // Extended data found. Replace the temporary key.
+            setProperty(kIOHIDLibClientExtendedData, extended);
+        }
+        else {
+        	// No extended data found. Remove the temporary key.
+            removeProperty(kIOHIDLibClientExtendedData);
+        }
+    }
+    return true;
+}

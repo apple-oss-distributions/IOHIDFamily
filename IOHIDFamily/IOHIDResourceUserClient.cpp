@@ -29,11 +29,12 @@
 
 #include "IOHIDResourceUserClient.h"
 
+#define kHIDRTimeoutNS    1000000000
 
 #define super IOUserClient
 
 
-OSDefineMetaClassAndStructors( IOHIDResourceDeviceUserClient, super )
+OSDefineMetaClassAndStructors( IOHIDResourceDeviceUserClient, IOUserClient )
 
 
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -69,6 +70,11 @@ const IOExternalMethodDispatch IOHIDResourceDeviceUserClient::_methods[kIOHIDRes
 //----------------------------------------------------------------------------------------------------
 bool IOHIDResourceDeviceUserClient::initWithTask(task_t owningTask, void * security_id, UInt32 type)
 {
+#if !TARGET_OS_EMBEDDED
+    if (kIOReturnSuccess != clientHasPrivilege(owningTask, kIOClientPrivilegeAdministrator))
+        return false;
+#endif
+    
     if (!super::initWithTask(owningTask, security_id, type)) {
 		IOLog("%s failed\n", __FUNCTION__);
 		return false;
@@ -98,6 +104,17 @@ bool IOHIDResourceDeviceUserClient::start(IOService * provider)
 }
 
 //----------------------------------------------------------------------------------------------------
+// IOHIDResourceDeviceUserClient::stop
+//----------------------------------------------------------------------------------------------------
+void IOHIDResourceDeviceUserClient::stop(IOService * provider)
+{
+    if ( _device )
+        _device->release();
+        
+    super::stop(provider);
+}
+
+//----------------------------------------------------------------------------------------------------
 // IOHIDResourceDeviceUserClient::free
 //----------------------------------------------------------------------------------------------------
 void IOHIDResourceDeviceUserClient::free()
@@ -105,9 +122,6 @@ void IOHIDResourceDeviceUserClient::free()
     if ( _queue )
         _queue->release();
 
-    if ( _device )
-        _device->release();
-        
     if ( _lock )
         IOLockFree(_lock);
         
@@ -119,6 +133,9 @@ void IOHIDResourceDeviceUserClient::free()
 //----------------------------------------------------------------------------------------------------
 IOReturn IOHIDResourceDeviceUserClient::registerNotificationPort(mach_port_t port, UInt32 type, io_user_reference_t refCon)
 {
+    if ( isInactive() )
+        return kIOReturnNoDevice;
+
     _port = port;
     _queue->setNotificationPort(port);
     return kIOReturnSuccess;
@@ -131,6 +148,9 @@ IOReturn IOHIDResourceDeviceUserClient::clientMemoryForType(UInt32 type, IOOptio
 {
     IOReturn ret = kIOReturnNoMemory;
            
+    if ( isInactive() )
+        return kIOReturnNoDevice;
+
     if ( !_queue ) {
         UInt32 maxOutputReportSize  = 0;
         UInt32 maxFeatureReportSize = 0;
@@ -180,6 +200,9 @@ IOReturn IOHIDResourceDeviceUserClient::externalMethod(
                                             OSObject *                  target, 
                                             void *                      reference)
 {
+    if ( isInactive() )
+        return kIOReturnNoDevice;
+        
     if (selector < (uint32_t) kIOHIDResourceDeviceUserClientMethodCount)
     {
         dispatch = (IOExternalMethodDispatch *) &_methods[selector];
@@ -223,7 +246,6 @@ IOService * IOHIDResourceDeviceUserClient::getService(void)
 IOReturn IOHIDResourceDeviceUserClient::clientClose(void)
 {
     cleanupPendingReports();
-    terminateDevice();
     terminate();
 	return kIOReturnSuccess;
 }
@@ -294,15 +316,25 @@ IOReturn IOHIDResourceDeviceUserClient::createDevice(
 		return kIOReturnNoResources;
 	}
 
-	if (!_device->attach(this) || !_device->start(this)) {
-		IOLog("%s attach or start failed\n", __FUNCTION__);
-		
+    IOReturn ret = kIOReturnInternalError;
+    
+	if (_device->attach(this) ) {
+        if ( _device->start(this) ) {
+            ret = kIOReturnSuccess;
+        } else {
+            IOLog("%s start failed\n", __FUNCTION__);
+            _device->detach(this);
+        }
+	} else {
+		IOLog("%s attach failed\n", __FUNCTION__);
+    }
+    
+    if ( ret != kIOReturnSuccess ) {
 		_device->release();
 		_device = NULL;
-		return kIOReturnInternalError;
-	}
+    }
 
-    return kIOReturnSuccess;
+    return ret;
 }
 
 //----------------------------------------------------------------------------------------------------
@@ -397,10 +429,19 @@ IOReturn IOHIDResourceDeviceUserClient::getReport(IOMemoryDescriptor *report, IO
                 
         // if we successfully enqueue, let's sleep till we get a result from postReportResult
         if ( _queue->enqueueReport(&header) ){
-            IOLockSleep(_lock, (void *)retData, THREAD_ABORTSAFE);    
-            
-            // mem descriptor is already populated in desc.  just get retval
-            ret = result.ret;
+            AbsoluteTime ts;
+            clock_interval_to_deadline(1, kHIDRTimeoutNS, &ts);
+            switch ( IOLockSleepDeadline(_lock, (void *)retData, ts, THREAD_ABORTSAFE) ) {
+                case THREAD_AWAKENED:
+                    ret = result.ret;
+                    break;
+                case THREAD_TIMED_OUT:
+                    ret = kIOReturnTimeout;
+                    break;
+                default:
+                    ret = kIOReturnError;
+                    break;
+            }
         }
         _pending->removeObject(retData);
         
@@ -437,10 +478,22 @@ IOReturn IOHIDResourceDeviceUserClient::setReport(IOMemoryDescriptor *report, IO
         retData->release();
                 
         // if we successfully enqueue, let's sleep till we get a result from postReportResult
-        if ( _queue->enqueueReport(&header, report) ) {    
-            IOLockSleep(_lock, (void *)retData, THREAD_ABORTSAFE);    
+        if ( _queue->enqueueReport(&header, report) ) {   
+            AbsoluteTime ts;
+            clock_interval_to_deadline(1, kHIDRTimeoutNS, &ts);
             
-            ret = result.ret;
+            switch ( IOLockSleepDeadline(_lock, (void *)retData, ts, THREAD_ABORTSAFE) ) {
+                case THREAD_AWAKENED:
+                    ret = result.ret;
+                    break;
+                case THREAD_TIMED_OUT:
+                    ret = kIOReturnTimeout;
+                    break;
+                default:
+                    ret = kIOReturnError;
+                    break;
+            }
+            
         }
         _pending->removeObject(retData);
         
@@ -514,7 +567,7 @@ void IOHIDResourceDeviceUserClient::cleanupPendingReports()
 IOReturn IOHIDResourceDeviceUserClient::terminateDevice()
 {
 	if (_device) {
-		_device->stop(this);
+		_device->terminate();
 		_device->release();
 	}
 	_device = NULL;

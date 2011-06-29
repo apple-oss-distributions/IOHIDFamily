@@ -77,6 +77,7 @@ __BEGIN_DECLS
 #define kIOHIDProductKey                    "Product"
 #define kIOHIDSerialNumberKey               "SerialNumber"
 #define kIOHIDCountryCodeKey                "CountryCode"
+#define kIOHIDStandardTypeKey               "StandardType"
 #define kIOHIDLocationIDKey                 "LocationID"
 #define kIOHIDDeviceUsageKey                "DeviceUsage"
 #define kIOHIDDeviceUsagePageKey            "DeviceUsagePage"
@@ -88,6 +89,7 @@ __BEGIN_DECLS
 #define kIOHIDMaxFeatureReportSizeKey	    "MaxFeatureReportSize"
 #define kIOHIDReportIntervalKey             "ReportInterval"
 #define kIOHIDReportDescriptorKey           "ReportDescriptor"
+#define kIOHIDResetKey                      "Reset"
 
 /*!
     @define kIOHIDElementKey
@@ -328,6 +330,20 @@ enum {
     kIOHIDElementFlagsBufferedByteMask    = 0x0100
 };
 typedef uint32_t IOHIDElementFlags;
+
+/*!
+  @typedef IOHIDStandardType
+  @abstract Type to define what industrial standard the device is referencing.
+  @constant kIOHIDStandardTypeANSI ANSI.
+  @constant kIOHIDStandardTypeISO ISO.
+  @constant kIOHIDStandardTypeJIS JIS.
+*/
+enum {
+    kIOHIDStandardTypeANSI                = 0,
+    kIOHIDStandardTypeISO                 = 1,
+    kIOHIDStandardTypeJIS                 = 2
+};
+typedef uint32_t IOHIDStandardType;
 
 __END_DECLS
 
