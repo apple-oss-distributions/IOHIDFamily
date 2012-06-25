@@ -46,6 +46,11 @@ __BEGIN_DECLS
 #include <ipc/ipc_port.h>
 __END_DECLS
 
+#if TARGET_OS_EMBEDDED
+#include <AppleMobileFileIntegrity/AppleMobileFileIntegrity.h>
+#define kIOHIDManagerEntitlement "com.apple.hid.manager.user-access"
+#endif
+
 #define super IOUserClient
 
 struct AsyncParam {
@@ -253,14 +258,17 @@ bool IOHIDLibUserClient::start(IOService *provider)
 
 	fWL->retain();
     
-    OSNumber *primaryUsage = OSDynamicCast(OSNumber, fNub->getProperty(kIOHIDPrimaryUsageKey));
-	OSNumber *primaryUsagePage = OSDynamicCast(OSNumber, fNub->getProperty(kIOHIDPrimaryUsagePageKey));
+    OSNumber *primaryUsage = (OSNumber*)fNub->copyProperty(kIOHIDPrimaryUsageKey);
+	OSNumber *primaryUsagePage = (OSNumber*)fNub->copyProperty(kIOHIDPrimaryUsagePageKey);
 
-	if ((primaryUsagePage && (primaryUsagePage->unsigned32BitValue() == kHIDPage_GenericDesktop)) &&
-		(primaryUsage && ((primaryUsage->unsigned32BitValue() == kHIDUsage_GD_Keyboard) || (primaryUsage->unsigned32BitValue() == kHIDUsage_GD_Keypad))))
+	if ((OSDynamicCast(OSNumber, primaryUsagePage) && (primaryUsagePage->unsigned32BitValue() == kHIDPage_GenericDesktop)) &&
+		(OSDynamicCast(OSNumber, primaryUsage) && ((primaryUsage->unsigned32BitValue() == kHIDUsage_GD_Keyboard) || (primaryUsage->unsigned32BitValue() == kHIDUsage_GD_Keypad))))
 	{
 		fNubIsKeyboard = true;
 	}
+	
+	OSSafeReleaseNULL(primaryUsage);
+	OSSafeReleaseNULL(primaryUsagePage);
 			
 	IOCommandGate * cmdGate = IOCommandGate::commandGate(this);
 	if (!cmdGate)
@@ -310,7 +318,7 @@ ABORT_START:
 	return false;
 }
 
-bool IOHIDLibUserClient::resourceNotification(void * refcon, IOService *service, IONotifier *notifier)
+bool IOHIDLibUserClient::resourceNotification(void * refcon __unused, IOService *service __unused, IONotifier *notifier __unused)
 {
 	#pragma ignore(notifier)
 	
@@ -337,10 +345,11 @@ void IOHIDLibUserClient::resourceNotificationGated()
 			break;
 		}
 			
-		data = OSDynamicCast(OSData, service->getProperty(kIOConsoleUsersSeedKey));
+		data = (OSData*)service->copyProperty(kIOConsoleUsersSeedKey);
 
-		if ( !data || !data->getLength() || !data->getBytesNoCopy()) {
+		if ( !OSDynamicCast(OSData, data) || !data->getLength() || !data->getBytesNoCopy() ) {
 			ret = kIOReturnError;
+			OSSafeReleaseNULL(data);
 			break;
 		}
 			
@@ -361,6 +370,7 @@ void IOHIDLibUserClient::resourceNotificationGated()
 				currentSeed = *(UInt64*)(data->getBytesNoCopy());
 				break;
 		}
+		OSSafeReleaseNULL(data);
 			
 		// We should return rather than break so that previous setting is retained
 		if ( currentSeed == fCachedConsoleUsersSeed )
@@ -369,6 +379,34 @@ void IOHIDLibUserClient::resourceNotificationGated()
 		fCachedConsoleUsersSeed = currentSeed;
 #endif
 		ret = clientHasPrivilege(fClient, kIOClientPrivilegeAdministrator);
+
+#if TARGET_OS_EMBEDDED
+        if (ret != kIOReturnSuccess ) {
+            bool result = false;
+            IOReturn    kr;
+            proc_t      process;
+            
+            process = (proc_t)get_bsdtask_info(fClient);
+            if ( process ) {
+
+                kr = AppleMobileFileIntegrity::AMFIEntitlementGetBool(process, kIOHIDManagerEntitlement, &result);
+
+                if ( kr || !result ) {
+                    char name[255];
+                    
+                    bzero(name, sizeof(name));
+                    proc_name(fPid, name, sizeof(name));
+                    
+                    IOLog("IOHIDLibUserClient: %s is not entitled\n", name);
+                }
+                
+                if (kr == kIOReturnSuccess && result) {
+                    ret = kIOReturnSuccess;
+                }
+            }
+        }
+#endif
+
 		if (ret == kIOReturnSuccess)
 			break;
 
@@ -438,7 +476,7 @@ IOReturn IOHIDLibUserClient::externalMethodGated(void * args)
 	return super::externalMethod(selector, arguments, dispatch, target, reference);
 }
 
-IOReturn IOHIDLibUserClient::_setQueueAsyncPort(IOHIDLibUserClient * target, void * reference, IOExternalMethodArguments * arguments)
+IOReturn IOHIDLibUserClient::_setQueueAsyncPort(IOHIDLibUserClient * target, void * reference __unused, IOExternalMethodArguments * arguments)
 {
 	return target->setQueueAsyncPort(target->getQueueForToken(arguments->scalarInput[0]), arguments->asyncWakePort);
 }
@@ -453,7 +491,7 @@ IOReturn IOHIDLibUserClient::setQueueAsyncPort(IOHIDEventQueue * queue, mach_por
 	return kIOReturnSuccess;
 }
 
-IOReturn IOHIDLibUserClient::_open(IOHIDLibUserClient * target, void * reference, IOExternalMethodArguments * arguments)
+IOReturn IOHIDLibUserClient::_open(IOHIDLibUserClient * target, void * reference __unused, IOExternalMethodArguments * arguments)
 {
 	return target->open((IOOptionBits)arguments->scalarInput[0]);
 }
@@ -470,6 +508,31 @@ IOReturn IOHIDLibUserClient::open(IOOptionBits options)
 	if (ret != kIOReturnSuccess )
 		ret = clientHasPrivilege(fClient, kIOClientPrivilegeAdministrator);
 
+#if TARGET_OS_EMBEDDED
+    if (ret != kIOReturnSuccess ) {
+        bool result = false;
+        IOReturn    kr;
+        proc_t      process;
+        
+        process = (proc_t)get_bsdtask_info(fClient);
+        if ( process ) {
+            kr = AppleMobileFileIntegrity::AMFIEntitlementGetBool(process, kIOHIDManagerEntitlement, &result);
+            if ( kr || !result ) {
+                char name[255];
+                
+                bzero(name, sizeof(name));
+                proc_name(fPid, name, sizeof(name));
+                
+                IOLog("IOHIDLibUserClient: %s is not entitled\n", name);
+            }
+
+            if (kr == kIOReturnSuccess && result) {
+                ret = kIOReturnSuccess;
+            }
+        }
+    }
+#endif
+
 	if (ret != kIOReturnSuccess)
 		return ret;
 
@@ -485,7 +548,7 @@ IOReturn IOHIDLibUserClient::open(IOOptionBits options)
 }
 
 
-IOReturn IOHIDLibUserClient::_close(IOHIDLibUserClient * target, void * reference, IOExternalMethodArguments * arguments)
+IOReturn IOHIDLibUserClient::_close(IOHIDLibUserClient * target, void * reference __unused, IOExternalMethodArguments * arguments __unused)
 {
 	return target->close();
 }
@@ -568,7 +631,7 @@ IOReturn IOHIDLibUserClient::message(UInt32 type, IOService * provider, void * a
 	return super::message(type, provider, argument);
 }
 
-IOReturn IOHIDLibUserClient::messageGated(UInt32 type, IOService * provider, void * argument )
+IOReturn IOHIDLibUserClient::messageGated(UInt32 type, IOService * provider __unused, void * argument )
 {
 	IOOptionBits options = (uintptr_t)argument;
 	switch ( type ) {
@@ -704,10 +767,11 @@ IOReturn IOHIDLibUserClient::dispatchMessage(void * messageIn)
 	return ret;
 }
 
-void IOHIDLibUserClient::setStateForQueues(UInt32 state, IOOptionBits options)
+void IOHIDLibUserClient::setStateForQueues(UInt32 state, IOOptionBits options __unused)
 {
 	for (u_int token = getNextTokenForToken(0); token != 0; token = getNextTokenForToken(token))
 	{
+        // this cannot return a NULL queue because of the above code
 		IOHIDEventQueue *queue = getQueueForToken(token);
 		switch (state) {
 			case kHIDQueueStateEnable:
@@ -753,7 +817,7 @@ IOReturn IOHIDLibUserClient::clientMemoryForTypeGated(
 			memoryToShare = fNub->getMemoryWithCurrentElementValues();
 	}
 	// otherwise, the type is token
-	else if (queue = getQueueForToken(token))
+	else if (NULL != (queue = getQueueForToken(token)))
 	{
 		memoryToShare = queue->getMemoryDescriptor();
 	}
@@ -776,7 +840,7 @@ IOReturn IOHIDLibUserClient::clientMemoryForTypeGated(
 }
 
 
-IOReturn IOHIDLibUserClient::_getElementCount(IOHIDLibUserClient * target, void * reference, IOExternalMethodArguments * arguments)
+IOReturn IOHIDLibUserClient::_getElementCount(IOHIDLibUserClient * target, void * reference __unused, IOExternalMethodArguments * arguments)
 {
 	return target->getElementCount(&(arguments->scalarOutput[0]), &(arguments->scalarOutput[1]));
 }
@@ -797,7 +861,7 @@ IOReturn IOHIDLibUserClient::getElementCount(uint64_t * pOutElementCount, uint64
 	return kIOReturnSuccess;
 }
 
-IOReturn IOHIDLibUserClient::_getElements(IOHIDLibUserClient * target, void * reference, IOExternalMethodArguments * arguments)
+IOReturn IOHIDLibUserClient::_getElements(IOHIDLibUserClient * target, void * reference __unused, IOExternalMethodArguments * arguments)
 {
 	if ( arguments->structureOutputDescriptor )
 		return target->getElements((uint32_t)arguments->scalarInput[0], arguments->structureOutputDescriptor, &(arguments->structureOutputDescriptorSize));
@@ -896,7 +960,7 @@ IOReturn IOHIDLibUserClient::getElements(uint32_t elementType, IOMemoryDescripto
 	return ret;
 }
 
-IOReturn IOHIDLibUserClient::_deviceIsValid(IOHIDLibUserClient * target, void * reference, IOExternalMethodArguments * arguments)
+IOReturn IOHIDLibUserClient::_deviceIsValid(IOHIDLibUserClient * target, void * reference __unused, IOExternalMethodArguments * arguments)
 {
 	IOReturn	kr;
 	bool		status;
@@ -921,7 +985,7 @@ IOReturn IOHIDLibUserClient::deviceIsValid(bool *status, uint64_t *generation)
 	return kIOReturnSuccess;
 }
 
-IOReturn IOHIDLibUserClient::_createQueue(IOHIDLibUserClient * target, void * reference, IOExternalMethodArguments * arguments)
+IOReturn IOHIDLibUserClient::_createQueue(IOHIDLibUserClient * target, void * reference __unused, IOExternalMethodArguments * arguments)
 {
 	return target->createQueue((uint32_t)arguments->scalarInput[0], (uint32_t)arguments->scalarInput[1], &(arguments->scalarOutput[0]));
 }
@@ -948,7 +1012,7 @@ IOReturn IOHIDLibUserClient::createQueue(uint32_t flags, uint32_t depth, uint64_
 }
 
 
-IOReturn IOHIDLibUserClient::_disposeQueue(IOHIDLibUserClient * target, void * reference, IOExternalMethodArguments * arguments)
+IOReturn IOHIDLibUserClient::_disposeQueue(IOHIDLibUserClient * target, void * reference __unused, IOExternalMethodArguments * arguments)
 {
 	return target->disposeQueue(target->getQueueForToken(arguments->scalarInput[0]));
 }
@@ -957,39 +1021,40 @@ IOReturn IOHIDLibUserClient::disposeQueue(IOHIDEventQueue * queue)
 {
 	IOReturn ret = kIOReturnSuccess;
 
-	// remove this queue from all elements that use it
-	if (fNub && !isInactive())
-		ret = fNub->stopEventDelivery (queue);
-	
-	// remove the queue from the map
-	removeQueueFromMap(queue);
-
+    // remove this queue from all elements that use it
+    if (fNub && !isInactive())
+        ret = fNub->stopEventDelivery (queue);
+    
+    // remove the queue from the map
+    removeQueueFromMap(queue);
+    
+    // This should really return an actual result
 	return kIOReturnSuccess;
 }
 
 	// Add an element to a queue
-IOReturn IOHIDLibUserClient::_addElementToQueue(IOHIDLibUserClient * target, void * reference, IOExternalMethodArguments * arguments)
+IOReturn IOHIDLibUserClient::_addElementToQueue(IOHIDLibUserClient * target, void * reference __unused, IOExternalMethodArguments * arguments)
 {
 	return target->addElementToQueue(target->getQueueForToken(arguments->scalarInput[0]), (IOHIDElementCookie)arguments->scalarInput[1], (uint32_t)arguments->scalarInput[2], &(arguments->scalarOutput[0]));
 }
 
-IOReturn IOHIDLibUserClient::addElementToQueue(IOHIDEventQueue * queue, IOHIDElementCookie elementCookie, uint32_t flags, uint64_t *pSizeChange)
+IOReturn IOHIDLibUserClient::addElementToQueue(IOHIDEventQueue * queue, IOHIDElementCookie elementCookie, uint32_t flags __unused, uint64_t *pSizeChange)
 {
 	IOReturn	ret		= kIOReturnSuccess;
 	UInt32		size	= 0;
-	
+    
 	size = (queue) ? queue->getEntrySize() : 0;
-	
-	// add the queue to the element's queues
-	if (fNub && !isInactive())
-		ret = fNub->startEventDelivery (queue, elementCookie);
+        
+    // add the queue to the element's queues
+    if (fNub && !isInactive())
+        ret = fNub->startEventDelivery (queue, elementCookie);
 		
 	*pSizeChange = (queue && (size != queue->getEntrySize()));
 	
 	return ret;
 }
 	// remove an element from a queue
-IOReturn IOHIDLibUserClient::_removeElementFromQueue (IOHIDLibUserClient * target, void * reference, IOExternalMethodArguments * arguments)
+IOReturn IOHIDLibUserClient::_removeElementFromQueue (IOHIDLibUserClient * target, void * reference __unused, IOExternalMethodArguments * arguments)
 {
 	return target->removeElementFromQueue(target->getQueueForToken(arguments->scalarInput[0]), (IOHIDElementCookie)arguments->scalarInput[1], &(arguments->scalarOutput[0]));
 }
@@ -1010,7 +1075,7 @@ IOReturn IOHIDLibUserClient::removeElementFromQueue (IOHIDEventQueue * queue, IO
 	return ret;
 }
 	// Check to see if a queue has an element
-IOReturn IOHIDLibUserClient::_queueHasElement (IOHIDLibUserClient * target, void * reference, IOExternalMethodArguments * arguments)
+IOReturn IOHIDLibUserClient::_queueHasElement (IOHIDLibUserClient * target, void * reference __unused, IOExternalMethodArguments * arguments)
 {
 	return target->queueHasElement(target->getQueueForToken(arguments->scalarInput[0]), (IOHIDElementCookie)arguments->scalarInput[1], &(arguments->scalarOutput[0]));
 }
@@ -1031,7 +1096,7 @@ IOReturn IOHIDLibUserClient::queueHasElement (IOHIDEventQueue * queue, IOHIDElem
 	return ret;
 }
 	// start a queue
-IOReturn IOHIDLibUserClient::_startQueue (IOHIDLibUserClient * target, void * reference, IOExternalMethodArguments * arguments)
+IOReturn IOHIDLibUserClient::_startQueue (IOHIDLibUserClient * target, void * reference __unused, IOExternalMethodArguments * arguments)
 {
 	return target->startQueue(target->getQueueForToken(arguments->scalarInput[0]));
 }
@@ -1039,13 +1104,15 @@ IOReturn IOHIDLibUserClient::_startQueue (IOHIDLibUserClient * target, void * re
 IOReturn IOHIDLibUserClient::startQueue (IOHIDEventQueue * queue)
 {
 	// start the queue
+    if (queue) {
 	queue->start();
-
 	return kIOReturnSuccess;
+}
+    return kIOReturnBadArgument;
 }
 
 	// stop a queue
-IOReturn IOHIDLibUserClient::_stopQueue (IOHIDLibUserClient * target, void * reference, IOExternalMethodArguments * arguments)
+IOReturn IOHIDLibUserClient::_stopQueue (IOHIDLibUserClient * target, void * reference __unused, IOExternalMethodArguments * arguments)
 {
 	return target->stopQueue(target->getQueueForToken(arguments->scalarInput[0]));
 }
@@ -1053,13 +1120,15 @@ IOReturn IOHIDLibUserClient::_stopQueue (IOHIDLibUserClient * target, void * ref
 IOReturn IOHIDLibUserClient::stopQueue (IOHIDEventQueue * queue)
 {
 	// stop the queue
-	queue->stop();
-
-	return kIOReturnSuccess;
+    if (queue) {
+        queue->stop();
+        return kIOReturnSuccess;
+    }
+    return kIOReturnBadArgument;
 }
 
 	// update the feature element value
-IOReturn IOHIDLibUserClient::_updateElementValues (IOHIDLibUserClient * target, void * reference, IOExternalMethodArguments * arguments)
+IOReturn IOHIDLibUserClient::_updateElementValues (IOHIDLibUserClient * target, void * reference __unused, IOExternalMethodArguments * arguments)
 {
 	return target->updateElementValues(arguments->scalarInput, arguments->scalarInputCount);
 }
@@ -1080,7 +1149,7 @@ IOReturn IOHIDLibUserClient::updateElementValues (const uint64_t * lCookies, uin
 }
 
 	// Set the element values
-IOReturn IOHIDLibUserClient::_postElementValues (IOHIDLibUserClient * target, void * reference, IOExternalMethodArguments * arguments)
+IOReturn IOHIDLibUserClient::_postElementValues (IOHIDLibUserClient * target, void * reference __unused, IOExternalMethodArguments * arguments)
 {
 	return target->postElementValues(arguments->scalarInput, arguments->scalarInputCount);
 }
@@ -1100,7 +1169,7 @@ IOReturn IOHIDLibUserClient::postElementValues (const uint64_t * lCookies, uint3
 	return ret;
 }
 
-IOReturn IOHIDLibUserClient::_getReport(IOHIDLibUserClient * target, void * reference, IOExternalMethodArguments * arguments)
+IOReturn IOHIDLibUserClient::_getReport(IOHIDLibUserClient * target, void * reference __unused, IOExternalMethodArguments * arguments)
 {
 	if ( arguments->asyncWakePort ) {
 		IOReturn		ret;
@@ -1162,7 +1231,7 @@ IOReturn IOHIDLibUserClient::getReport(IOMemoryDescriptor * mem, uint32_t * pOut
 	}
 	else if (fNub && !isInactive()) {
 		ret = mem->prepare();
-		if(ret == kIOReturnSuccess)
+		if(ret == kIOReturnSuccess) {
 			if (completion) {
 				AsyncParam * pb = (AsyncParam *)completion->parameter;
 				pb->fMax		= *pOutsize;
@@ -1183,6 +1252,7 @@ IOReturn IOHIDLibUserClient::getReport(IOMemoryDescriptor * mem, uint32_t * pOut
 				*pOutsize = mem->getLength();
 				mem->complete();
 			}
+        }
 	}
 	else
 		ret = kIOReturnNotAttached;
@@ -1191,7 +1261,7 @@ IOReturn IOHIDLibUserClient::getReport(IOMemoryDescriptor * mem, uint32_t * pOut
 
 }
 
-IOReturn IOHIDLibUserClient::_setReport(IOHIDLibUserClient * target, void * reference, IOExternalMethodArguments * arguments)
+IOReturn IOHIDLibUserClient::_setReport(IOHIDLibUserClient * target, void * reference __unused, IOExternalMethodArguments * arguments)
 {
 	IOReturn ret = kIOReturnError;
 
@@ -1254,8 +1324,8 @@ IOReturn IOHIDLibUserClient::setReport(IOMemoryDescriptor * mem, IOHIDReportType
 	if (fNub && !isInactive()) {
 		ret = mem->prepare();
 		if(ret == kIOReturnSuccess) {
-            OSArray *extended = OSDynamicCast(OSArray, getProperty(kIOHIDLibClientExtendedData));
-            if (extended && extended->getCount()) {
+            OSArray *extended = (OSArray*)copyProperty(kIOHIDLibClientExtendedData);
+            if (OSDynamicCast(OSArray, extended) && extended->getCount()) {
                 OSCollectionIterator *itr = OSCollectionIterator::withCollection(extended);
                 if (itr) {
                     bool done = false;
@@ -1283,6 +1353,7 @@ IOReturn IOHIDLibUserClient::setReport(IOMemoryDescriptor * mem, IOHIDReportType
                     itr->release();
                 }
             }
+            OSSafeReleaseNULL(extended);
             if (ret == kIOReturnSuccess) {
                 if ( completion ) {
                     AsyncParam * pb = (AsyncParam *)completion->parameter;
@@ -1370,7 +1441,7 @@ void IOHIDLibUserClient::removeQueueFromMap(IOHIDEventQueue *queue)
 {
 	OSObject *obj = NULL;
 
-	for (u_int index = 0; obj = fQueueMap->getObject(index); index++)
+	for (u_int index = 0; NULL != (obj = fQueueMap->getObject(index)); index++)
 		if (obj == queue) {
 			fQueueMap->replaceObject(index, kOSBooleanFalse);
 		}
@@ -1411,8 +1482,8 @@ IOHIDLibUserClient::attach(IOService * provider)
     }
     if (provider && getProperty(kIOHIDLibClientExtendedData)) {
         // Check for extended data
-        OSArray *extended = OSDynamicCast(OSArray, provider->getProperty(kIOHIDLibClientExtendedData, gIOServicePlane));
-        if (extended && extended->getCount()) {
+        OSArray *extended = (OSArray*)provider->copyProperty(kIOHIDLibClientExtendedData, gIOServicePlane);
+        if (OSDynamicCast(OSArray, extended) && extended->getCount()) {
             // Extended data found. Replace the temporary key.
             setProperty(kIOHIDLibClientExtendedData, extended);
         }
@@ -1420,6 +1491,7 @@ IOHIDLibUserClient::attach(IOService * provider)
         	// No extended data found. Remove the temporary key.
             removeProperty(kIOHIDLibClientExtendedData);
         }
+        OSSafeReleaseNULL(extended);
     }
     return true;
 }

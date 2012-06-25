@@ -46,11 +46,6 @@ public:
         y.fromFixed24x8(p.y); 
     }
     
-    IOFixedPoint64(IOGPoint p) {
-        x.fromInt(p.x); 
-        y.fromInt(p.y); 
-    }
-    
     operator const IOFixedPoint32() {
         IOFixedPoint32 r;
         r.x = x.asFixed24x8();
@@ -69,9 +64,15 @@ public:
         return (x || y);
     }
     
-    IOFixedPoint64& fromInt(SInt64 x_in, SInt64 y_in) {
-        x.fromInt(x_in);
-        y.fromInt(y_in);
+    IOFixedPoint64& fromIntFloor(SInt64 x_in, SInt64 y_in) {
+        x.fromIntFloor(x_in);
+        y.fromIntFloor(y_in);
+        return *this;
+    }
+    
+    IOFixedPoint64& fromIntCeiling(SInt64 x_in, SInt64 y_in) {
+        x.fromIntCeiling(x_in);
+        y.fromIntCeiling(y_in);
         return *this;
     }
     
@@ -92,9 +93,31 @@ public:
         y.fromFixed24x8(y_in);
         return *this;
     }
-    
+
     bool inRect(volatile IOGBounds &rect) {
         return (x >= (SInt64)rect.minx) && (x < (SInt64)rect.maxx) && (y >= (SInt64)rect.miny) && (y < (SInt64)rect.maxy);
+    }
+    
+    void clipToRect(volatile IOGBounds &rect) {
+        IOFixed64 minx;
+        minx.fromIntFloor(rect.minx);
+        IOFixed64 maxx;
+        maxx.fromIntCeiling(rect.maxx - 1);
+        
+        if (x < minx)
+            x = minx;
+        else if (x > maxx)
+            x = maxx;
+        
+        IOFixed64 miny;
+        miny.fromIntFloor(rect.miny);
+        IOFixed64 maxy;
+        maxy.fromIntCeiling(rect.maxy - 1);
+
+        if (y < miny)
+            y = miny;
+        else if (y > maxy)
+            y = maxy;
     }
     
     IOFixed64& xValue() {
@@ -117,8 +140,8 @@ IOFixedPoint64& operator OP(IOFixed64 s) { \
     return *this; \
 } \
 IOFixedPoint64& operator OP(SInt64 s) { \
-IOFixed64 s_fixed; \
-    return (*this OP s_fixed.fromInt(s)); \
+    IOFixed64 s_fixed; \
+    return (*this OP s_fixed.fromIntFloor(s)); \
 }
     
     ARITHMETIC_OPERATOR(+=)
