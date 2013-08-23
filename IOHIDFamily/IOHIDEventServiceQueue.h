@@ -31,7 +31,7 @@ class IOHIDEvent;
 //---------------------------------------------------------------------------
 // IOHIDEventSeviceQueue class.
 //
-// IOHIDEventServiceQueue is a subclass of IODataQueue.
+// IOHIDEventServiceQueue is a subclass of IOSharedDataQueue.
 
 class IOHIDEventServiceQueue: public IOSharedDataQueue
 {
@@ -54,4 +54,5 @@ public:
     virtual void setNotificationPort(mach_port_t port);
 };
 
+//---------------------------------------------------------------------------
 #endif /* !_IOKIT_HID_IOHIDEVENTSERVICEQUEUE_H */
