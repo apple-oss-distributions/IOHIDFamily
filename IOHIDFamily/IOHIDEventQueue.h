@@ -25,21 +25,22 @@
 #ifndef _IOKIT_HID_IOHIDEVENTQUEUE_H
 #define _IOKIT_HID_IOHIDEVENTQUEUE_H
 
-#include <IOKit/IODataQueue.h>
+#include <IOKit/IOSharedDataQueue.h>
 #include <IOKit/IOLocks.h>
 #include "IOHIDKeys.h"
 #include "IOHIDElementPrivate.h"
 
 #define DEFAULT_HID_ENTRY_SIZE  sizeof(IOHIDElementValue)+ sizeof(void *)
+#define MIN_HID_QUEUE_CAPACITY  16384
 
 //---------------------------------------------------------------------------
 // IOHIDEventQueue class.
 //
-// IOHIDEventQueue is a subclass of IODataQueue. But this may change
+// IOHIDEventQueue is a subclass of IOSharedDataQueue. But this may change
 // if the HID Manager requires HID specific functionality for the
 // event queueing.
 
-class IOHIDEventQueue: public IODataQueue
+class IOHIDEventQueue: public IOSharedDataQueue
 {
     OSDeclareDefaultStructors( IOHIDEventQueue )
     
@@ -69,7 +70,9 @@ public:
     
     static IOHIDEventQueue * withEntries( UInt32 numEntries,
                                           UInt32 entrySize );
-                                          
+    
+    virtual Boolean initWithEntries(UInt32 numEntries, UInt32 entrySize);
+    
     virtual void free();
 
     virtual Boolean enqueue( void * data, UInt32 dataSize );

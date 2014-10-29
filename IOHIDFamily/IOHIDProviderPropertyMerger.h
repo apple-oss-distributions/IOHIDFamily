@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2006 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 1998-2014 Apple Computer, Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
@@ -23,11 +23,11 @@
 
 #include <IOKit/IOService.h>
 
-#ifndef _IOKIT_IOHIDUSERCLIENTINITER_H
-#define _IOKIT_IOHIDUSERCLIENTINITER_H
-class IOHIDUserClientIniter : public IOService 
+#ifndef _IOKIT_IOHIDPROVIDERPROPERTYMERGER_H
+#define _IOKIT_IOHIDPROVIDERPROPERTYMERGER_H
+class IOHIDProviderPropertyMerger : public IOService 
 {
-    OSDeclareDefaultStructors(IOHIDUserClientIniter);
+    OSDeclareDefaultStructors(IOHIDProviderPropertyMerger);
 
 protected:
     struct ExpansionData { };
@@ -36,23 +36,12 @@ protected:
         Reserved for future use.  (Internal use only)  */
     ExpansionData *reserved;
 
-    virtual bool 		mergeDictionaryIntoProvider(IOService *  provider, OSDictionary *  mergeDict);
-    virtual bool		mergeDictionaryIntoDictionary(OSDictionary *  sourceDictionary,  OSDictionary *  targetDictionary);
+    virtual bool mergeProperties(IOService *  provider, OSDictionary * properties);
+    virtual bool mergeDictionaries(OSDictionary * source, OSDictionary * target);
 
 public:
     
-    virtual bool		start(IOService *  provider) ;
-
-/*
-    OSMetaClassDeclareReservedUnused(IOHIDUserClientIniter, 0);
-    OSMetaClassDeclareReservedUnused(IOHIDUserClientIniter, 1);
-    OSMetaClassDeclareReservedUnused(IOHIDUserClientIniter, 2);
-    OSMetaClassDeclareReservedUnused(IOHIDUserClientIniter, 3);
-    OSMetaClassDeclareReservedUnused(IOHIDUserClientIniter, 4);
-    OSMetaClassDeclareReservedUnused(IOHIDUserClientIniter, 5);
-    OSMetaClassDeclareReservedUnused(IOHIDUserClientIniter, 6);
-    OSMetaClassDeclareReservedUnused(IOHIDUserClientIniter, 7);
-*/
+    virtual bool start(IOService * provider);
 };
 
-#endif /* ! _IOKIT_IOHIDUSERCLIENTINITER_H */
+#endif /* ! _IOKIT_IOHIDPROVIDERPROPERTYMERGER_H */
