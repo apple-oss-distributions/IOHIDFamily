@@ -34,6 +34,8 @@
 
 #define kHIDQueueSize           16384
 
+#define MIN(a,b) ((a) < (b) ? (a) : (b))
+
 #define super IOUserClient
 
 
@@ -540,6 +542,7 @@ IOReturn IOHIDResourceDeviceUserClient::_handleReport(IOHIDResourceDeviceUserCli
 typedef struct {
     IOReturn                ret;
     IOMemoryDescriptor *    descriptor;
+    u_int64_t               token;
 } __ReportResult;
 
 //----------------------------------------------------------------------------------------------------
@@ -571,6 +574,7 @@ IOReturn IOHIDResourceDeviceUserClient::getReportGated(ReportGatedArguments * ar
     require_action(!isInactive(), exit, ret=kIOReturnOffline);
     
     result.descriptor = arguments->report;
+    result.token      = _tokenIndex++;
     
     retData = OSData::withBytesNoCopy(&result, sizeof(__ReportResult));
     require_action(retData, exit, ret=kIOReturnNoMemory);
@@ -579,7 +583,7 @@ IOReturn IOHIDResourceDeviceUserClient::getReportGated(ReportGatedArguments * ar
     header.type        = arguments->reportType;
     header.reportID    = arguments->options&0xff;
     header.length      = (uint32_t)arguments->report->getLength();
-    header.token       = (intptr_t)retData;
+    header.token       = result.token;
 
     _pending->setObject(retData);
     
@@ -640,6 +644,8 @@ IOReturn IOHIDResourceDeviceUserClient::setReportGated(ReportGatedArguments * ar
 
     bzero(&result, sizeof(result));
     
+    result.token       = _tokenIndex++;
+    
     retData = OSData::withBytesNoCopy(&result, sizeof(result));
     require_action(retData, exit, ret=kIOReturnNoMemory);
     
@@ -647,7 +653,7 @@ IOReturn IOHIDResourceDeviceUserClient::setReportGated(ReportGatedArguments * ar
     header.type        = arguments->reportType;
     header.reportID    = arguments->options&0xff;
     header.length      = (uint32_t)arguments->report->getLength();
-    header.token       = (intptr_t)retData;
+    header.token       = result.token;
 
     _pending->setObject(retData);
     
@@ -683,32 +689,39 @@ exit:
 //----------------------------------------------------------------------------------------------------
 IOReturn IOHIDResourceDeviceUserClient::postReportResult(IOExternalMethodArguments * arguments)
 {
-    OSObject * tokenObj = (OSObject*)arguments->scalarInput[kIOHIDResourceUserClientResponseIndexToken];
+    OSObject * object = NULL;
+    
+    u_int64_t token = (u_int64_t)arguments->scalarInput[kIOHIDResourceUserClientResponseIndexToken];
 
-    if ( tokenObj && _pending->containsObject(tokenObj) ) {
-        OSData * data = OSDynamicCast(OSData, tokenObj);
-        if ( data ) {
-            __ReportResult * pResult = (__ReportResult*)data->getBytesNoCopy();
+    OSCollectionIterator * iterator = OSCollectionIterator::withCollection(_pending);
+    if ( !iterator )
+        return kIOReturnNoMemory;
+    
+    while ( (object = iterator->getNextObject()) ) {
+        __ReportResult * pResult = (__ReportResult*)((OSData*)object)->getBytesNoCopy();
+        
+        if (pResult->token != token)
+            continue;
+        
+        // RY: HIGHLY UNLIKELY > 4K
+        if ( pResult->descriptor && arguments->structureInput ) {
+            pResult->descriptor->writeBytes(0, arguments->structureInput, arguments->structureInputSize);
             
-            // RY: HIGHLY UNLIKELY > 4K
-            if ( pResult->descriptor && arguments->structureInput ) {
-                pResult->descriptor->writeBytes(0, arguments->structureInput, arguments->structureInputSize);
-
-                // 12978252:  If we get an IOBMD passed in, set the length to be the # of bytes that were transferred
-                IOBufferMemoryDescriptor * buffer = OSDynamicCast(IOBufferMemoryDescriptor, pResult->descriptor);
-                if (buffer)
-                    buffer->setLength((vm_size_t)arguments->structureInputSize);
+            // 12978252:  If we get an IOBMD passed in, set the length to be the # of bytes that were transferred
+            IOBufferMemoryDescriptor * buffer = OSDynamicCast(IOBufferMemoryDescriptor, pResult->descriptor);
+            if (buffer)
+                buffer->setLength(MIN((vm_size_t)arguments->structureInputSize, buffer->getCapacity()));
             
-            }
-                
-            pResult->ret = (IOReturn)arguments->scalarInput[kIOHIDResourceUserClientResponseIndexResult];
-
-            _commandGate->commandWakeup(data);
         }
-            
+        
+        pResult->ret = (IOReturn)arguments->scalarInput[kIOHIDResourceUserClientResponseIndexResult];
+        
+        _commandGate->commandWakeup(object);
+        
+        return kIOReturnSuccess;
     }
 
-    return kIOReturnSuccess;
+    return kIOReturnNotFound;
 }
 
 //----------------------------------------------------------------------------------------------------
@@ -816,6 +829,11 @@ Boolean IOHIDResourceQueue::enqueueReport(IOHIDResourceDataQueueHeader * header,
     const UInt32        entrySize   = dataSize + DATA_QUEUE_ENTRY_HEADER_SIZE;
     IODataQueueEntry *  entry;
 
+    if ( ( tail > getQueueSize() || head > getQueueSize() ) )
+    {
+        return false;
+    }
+
     if ( tail >= head )
     {
         // Is there enough room at the end for the entry?
@@ -867,7 +885,7 @@ Boolean IOHIDResourceQueue::enqueueReport(IOHIDResourceDataQueueHeader * header,
         // Do not allow the tail to catch up to the head when the queue is full.
         // That's why the comparison uses a '>' rather than '>='.
 
-        if ( (head - tail) > entrySize )
+        if ( ( ( head - tail) > entrySize ) && ( tail + entrySize <= getQueueSize() ) )
         {
             entry = (IODataQueueEntry *)((UInt8 *)dataQueue->queue + tail);
 
