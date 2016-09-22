@@ -65,6 +65,9 @@ public:
     // others
 
     virtual bool start( IOService * provider );
+    virtual void stop( IOService * provider );
+    virtual IOReturn close( void );
+    
     virtual IOReturn setProperties( OSObject * properties );
     IOReturn extGetUserHidActivityState(void*,void*,void*,void*,void*,void*);
 };
@@ -96,43 +99,16 @@ private:
     virtual IOReturn extPostEvent(void*,void*,void*,void*,void*,void*);
 };
 
-class IOHIDStackShotUserClient : public IOUserClient
-{
-    OSDeclareDefaultStructors(IOHIDStackShotUserClient)
-
-private:
-
-    IOHIDSystem *	owner;
-    task_t          client;
-    
-public:
-    virtual bool initWithTask(task_t owningTask, void * security_id, UInt32 type );
-
-    // IOUserClient methods    
-    virtual IOReturn clientClose( void );
-
-    virtual IOService * getService( void );
-
-    virtual IOReturn registerNotificationPort(
-		mach_port_t 	port,
-		UInt32		type,
-		UInt32		refCon );
-    // others
-
-    virtual bool start( IOService * provider );
-
-};
-
 class IOHIDEventSystemUserClient : public IOUserClient
 {
     OSDeclareDefaultStructors(IOHIDEventSystemUserClient)
 
 private:
     IOHIDSystem *               owner;
-    task_t                      client;
+    //task_t                      client;
     IOHIDEventServiceQueue *    kernelQueue;
-    OSSet *						userQueues;
-
+    OSSet *                     userQueues;
+    IOCommandGate *             commandGate;
 	static void initialize(void);
 	static UInt32 createIDForDataQueue(IODataQueue * eventQueue);
 	static void removeIDForDataQueue(IODataQueue * eventQueue);
@@ -147,7 +123,9 @@ public:
 
     virtual IOExternalMethod * getTargetAndMethodForIndex(IOService ** targetP, UInt32 index );
     virtual IOReturn createEventQueue(void*,void*,void*,void*,void*,void*);
+    virtual IOReturn createEventQueueGated(void*p1,void*p2,void*p3, void*);
     virtual IOReturn destroyEventQueue(void*,void*,void*,void*,void*,void*);
+    virtual IOReturn destroyEventQueueGated(void*,void*,void*,void*);
     virtual IOReturn tickle(void*,void*,void*,void*,void*,void*);
 
     virtual IOReturn registerNotificationPort(mach_port_t port, UInt32 type, UInt32 refCon );
@@ -156,7 +134,7 @@ public:
     virtual IOService * getService( void );
 
     virtual bool start( IOService * provider );
-
+    virtual void stop ( IOService * provider );
 };
 
 

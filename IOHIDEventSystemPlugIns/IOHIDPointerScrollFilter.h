@@ -1,43 +1,32 @@
 //
-//  IOHIDAccessibilityFilter.h
+//  IOHIDPointerScrollFilter.h
 //  IOHIDFamily
 //
-//  Created by Gopu Bhaskar on 3/10/15.
+//  Created by Yevgen Goryachok 10/30/15.
 //
 //
 
-#ifndef _IOHIDFamily_IOHIDAccessibilityFilter_
-#define _IOHIDFamily_IOHIDAccessibilityFilter_
+#ifndef _IOHIDFamily_IOHIDPointerScrollFilter_
+#define _IOHIDFamily_IOHIDPointerScrollFilter_
 #include <sys/cdefs.h>
 #include <CoreFoundation/CoreFoundation.h>
 #if COREFOUNDATION_CFPLUGINCOM_SEPARATE
 #include <CoreFoundation/CFPlugInCOM.h>
 #endif
 
+#include <IOKit/hid/IOHIDService.h>
 #include <IOKit/hid/IOHIDServiceFilterPlugIn.h>
 #include <IOKit/hid/IOHIDUsageTables.h>
+#include "IOHIDAcceleration.hpp"
+#include "CF.h"
 
+#define kDefaultPointerResolutionFixed (400 << 16)
 
-enum {
-    kStickyKeysEnableCount = 5,
-    kStickyKeysShiftKeyInterval = 30,
-};
-
-enum {
-    kStickyKeyState_Reset   = 1 << 0,
-    kStickyKeyState_Down    = 1 << 1,
-    kStickyKeyState_Locked  = 2 << 2,
-};
-
-typedef UInt32 StickyKeyState;
-
-#define MAX_STICKY_KEYS (kHIDUsage_KeyboardRightGUI - kHIDUsage_KeyboardLeftControl + 3)
-
-class IOHIDAccessibilityFilter
+class IOHIDPointerScrollFilter
 {
 public:
-    IOHIDAccessibilityFilter(CFUUIDRef factoryID);
-    ~IOHIDAccessibilityFilter();
+    IOHIDPointerScrollFilter(CFUUIDRef factoryID);
+    ~IOHIDPointerScrollFilter();
     HRESULT QueryInterface( REFIID iid, LPVOID *ppv );
     ULONG AddRef();
     ULONG Release();
@@ -59,8 +48,8 @@ private:
     IOHIDServiceFilterPlugInInterface *_serviceInterface;
     CFUUIDRef                   _factoryID;
     UInt32                      _refCount;
-
-    static IOHIDServiceFilterPlugInInterface sIOHIDAccessibilityFilterFtbl;
+ 
+    static IOHIDServiceFilterPlugInInterface sIOHIDPointerScrollFilterFtbl;
     static HRESULT QueryInterface( void *self, REFIID iid, LPVOID *ppv );
     static ULONG AddRef( void *self );
     static ULONG Release( void *self );
@@ -81,45 +70,37 @@ private:
     void * _eventTarget;
     void * _eventContext;
     static void setEventCallback(void * self, IOHIDServiceEventCallback callback, void * target, void * refcon);
+  
+    void setupAcceleration ();
+    void setupPointerAcceleration();
+    void setupScrollAcceleration();
+  
+    void accelerateChildrens(IOHIDEventRef event);
+    void accelerateEvent(IOHIDEventRef event);
+  
+    static CFStringRef          _cachedPropertyList[];
 
-    bool _stickyKeysFeatureEnabled;
-    bool _stickyKeysOn;
-    bool _stickyKeysShiftKeyToggles;
+    IOHIDAccelerator            *_pointerAccelerator;
+    IOHIDAccelerator            *_scrollAccelerators[3];
     
-    bool _slowKeysInProgress;
-    UInt32 _slowKeysCurrentUsage;
-    UInt32 _slowKeysCurrentUsagePage;
-    IOHIDEventRef _slowKeysSlowEvent;
-    
-    UInt32 _slowKeysDelay;
-    
-    UInt32 _stickyKeysShiftKeyCount;
-    StickyKeyState _stickyKeyState[MAX_STICKY_KEYS];
-
-    IOHIDEventRef processStickyKeys(IOHIDEventRef event);
-    void setStickyKeyState(UInt32 usagePage, UInt32 usage, StickyKeyState state);
-    StickyKeyState getStickyKeyState(UInt32 usagePage, UInt32 usage);
-    
-    dispatch_queue_t _queue;
-    dispatch_source_t _stickyKeysShiftResetTimer;
-    dispatch_source_t _slowKeysTimer;
-    
-    void dispatchStickyKeys(int stateMask);
-    bool processStickyKeyUp(UInt32 usagePage, UInt32 usage, UInt32& flags);
-    bool processStickyKeyDown(UInt32 usagePage, UInt32 usage, UInt32& flags);
-    void processStickyKeys(void);
-    void processShiftKey(void);
-    
-    IOHIDEventRef processSlowKeys(IOHIDEventRef event);
-    void dispatchSlowKey(void);
-    void resetSlowKey(void);
-
-    
+    dispatch_queue_t            _queue;
+    CFMutableDictionaryRefWrap  _cachedProperty;
+    IOHIDServiceRef             _service;
+    double                      _pointerAcceleration;
+    double                      _scrollAcceleration;
+    boolean_t                   _leagacyShim;
+  
+    void serialize (CFMutableDictionaryRef dict) const;
+  
+    CFTypeRef copyCachedProperty (CFStringRef key) const;
+  
+  
 private:
-    IOHIDAccessibilityFilter();
-    IOHIDAccessibilityFilter(const IOHIDAccessibilityFilter &);
-    IOHIDAccessibilityFilter &operator=(const IOHIDAccessibilityFilter &);
+  
+    IOHIDPointerScrollFilter();
+    IOHIDPointerScrollFilter(const IOHIDPointerScrollFilter &);
+    IOHIDPointerScrollFilter &operator=(const IOHIDPointerScrollFilter &);
 };
 
 
-#endif /* defined(_IOHIDFamily_IOHIDAccessibilityFilter_) */
+#endif /* defined(_IOHIDFamily_IOHIDPointerScrollFilter_) */

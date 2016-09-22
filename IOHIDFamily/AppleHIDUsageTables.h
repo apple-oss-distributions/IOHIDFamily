@@ -48,7 +48,9 @@ enum
     kHIDPage_AppleVendorBattery                 = 0xff0D,
     kHIDPage_AppleVendorIRRemote                = 0xff0E,
     kHIDPage_AppleVendorDebug                   = 0xff0F,
+    kHIDPage_AppleVendorIRInterface             = 0xff10,
     kHIDPage_AppleVendorFilteredEvent           = 0xff50,
+    kHIDPage_AppleVendorMultitouch              = 0xff60,
     kHIDPage_AppleVendorDisplay                 = 0xff92,
     kHIDPage_AppleVendorTopCase                 = 0x00ff
 };
@@ -77,6 +79,14 @@ enum
     kHIDUsage_AppleVendor_BluetoothRadio        = 0x0012, /* Application Collection */
     kHIDUsage_AppleVendor_Orb                   = 0x0013, /* Application Collection */
     kHIDUsage_AppleVendor_AccessoryBattery      = 0x0014, /* Application Collection */
+    kHIDUsage_AppleVendor_Humidity              = 0x0015, /* Application Collection */
+    kHIDUsage_AppleVendor_HIDEventRelay         = 0x0016, /* Application Collection */
+    kHIDUsage_AppleVendor_NXEvent               = 0x0017, /* Application Collection */
+    kHIDUsage_AppleVendor_NXEvent_Translated    = 0x0018, /* Application Collection */
+    kHIDUsage_AppleVendor_NXEvent_Diagnostic    = 0x0019, /* Application Collection */
+    kHIDUsage_AppleVendor_Homer                 = 0x0020, /* Application Collection */
+    kHIDUsage_AppleVendor_Color                 = 0x0021, /* Dynamic Value */
+    kHIDUsage_AppleVendor_Accessibility         = 0x0022, /* Application Collection */
 };
 
 
@@ -131,6 +141,7 @@ enum {
     kHIDUsage_AppleVendorMotion_Activity        = 0x0002,
     kHIDUsage_AppleVendorMotion_Gesture         = 0x0003,
     kHIDUsage_AppleVendorMotion_DeviceMotion    = 0x0004,
+    kHIDUsage_AppleVendorMotion_DeviceMotion6   = 0x0005
 };
 
 /* AppleVendor Battery (0xff0D) */
@@ -154,6 +165,22 @@ enum {
     kHIDUsage_AppleVendorDebug_Stackshot            = 0x0002,
     kHIDUsage_AppleVendorDebug_SendLogs             = 0x0003,
     kHIDUsage_AppleVendorDebug_BlackScreenRecover   = 0x0004,
+};
+
+/* AppleVendor IR Interface (0xff10) */
+enum {
+    kHIDUsage_AppleVendorIRInterface_IRCommand      = 0x0001,
+    kHIDUsage_AppleVendorIRInterface_IRTimings      = 0x0002,
+};
+
+/* AppleVendor Multitouch Page (0xff60) */
+enum
+{
+    kHIDUsage_AppleVendorMultitouch_PowerOff            = 0x0001,
+    kHIDUsage_AppleVendorMultitouch_DeviceReady         = 0x0002,
+    kHIDUsage_AppleVendorMultitouch_ExternalMessage     = 0x0003,
+    kHIDUsage_AppleVendorMultitouch_WillPowerOn         = 0x0004,
+    kHIDUsage_AppleVendorMultitouch_TouchCancel         = 0x0005
 };
 
 /* AppleVendor Page Top Case (0x00ff) */

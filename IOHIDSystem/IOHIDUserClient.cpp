@@ -40,7 +40,9 @@
 #include "IOHIDPrivate.h"
 #include "IOHIDSystem.h"
 #include "IOHIDEventSystemQueue.h"
+#include "IOHIDDebug.h"
 
+#define kIOHIDSystemUserAccessServiceEntitlement "com.apple.hid.system.user-access-service"
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
@@ -51,7 +53,7 @@ OSDefineMetaClassAndStructors(IOHIDUserClient, IOUserClient)
 
 OSDefineMetaClassAndStructors(IOHIDParamUserClient, IOUserClient)
 
-OSDefineMetaClassAndStructors(IOHIDStackShotUserClient, IOUserClient)
+//OSDefineMetaClassAndStructors(IOHIDStackShotUserClient, IOUserClient)
 
 OSDefineMetaClassAndStructorsWithInit(IOHIDEventSystemUserClient, IOUserClient, IOHIDEventSystemUserClient::initialize())
 
@@ -69,14 +71,27 @@ bool IOHIDUserClient::start( IOService * _owner )
 
 IOReturn IOHIDUserClient::clientClose( void )
 {
+    terminate();
+
+    return kIOReturnSuccess;
+}
+
+IOReturn IOHIDUserClient::close( void )
+{
     if (owner) {
-    owner->evClose();
-    owner->serverConnect = 0;
-        detach(owner);
+        owner->evClose();
+        owner->serverConnect = 0;
         owner = NULL;
     }
+    
+    return kIOReturnSuccess;
+}
 
-    return( kIOReturnSuccess);
+void IOHIDUserClient::stop( IOService * provider )
+{
+    close();
+    
+    super::stop(provider);
 }
 
 IOService * IOHIDUserClient::getService( void )
@@ -94,7 +109,7 @@ IOReturn IOHIDUserClient::registerNotificationPort(
     if (!owner)
         return kIOReturnOffline;
 
-    owner->setEventPort(port);
+    //owner->setEventPort(port);
     return kIOReturnSuccess;
 }
 
@@ -181,12 +196,12 @@ IOExternalMethod * IOHIDUserClient::getTargetAndMethodForIndex(
 
 IOReturn IOHIDUserClient::setProperties( OSObject * properties )
 {
-    OSDictionary * dict = OSDynamicCast(OSDictionary, properties);
-    if (dict && dict->getObject(kIOHIDUseKeyswitchKey) &&
-        ( clientHasPrivilege(current_task(), kIOClientPrivilegeAdministrator) != kIOReturnSuccess))
-    {
-        dict->removeObject(kIOHIDUseKeyswitchKey);
-    }
+//    OSDictionary * dict = OSDynamicCast(OSDictionary, properties);
+//    if (dict && dict->getObject(kIOHIDUseKeyswitchKey) &&
+//        ( clientHasPrivilege(current_task(), kIOClientPrivilegeAdministrator) != kIOReturnSuccess))
+//    {
+//        dict->removeObject(kIOHIDUseKeyswitchKey);
+//    }
 
     return( owner ? owner->setProperties( properties ) : kIOReturnOffline );
 }
@@ -279,68 +294,6 @@ IOReturn IOHIDParamUserClient::extGetUserHidActivityState(void* value,void*,void
     return result;
 }
 
-/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
-bool IOHIDStackShotUserClient::
-initWithTask(task_t owningTask, void * /* security_id */, UInt32 /* type */)
-{
-    if (!super::init())
-        return false;
-    IOReturn priv = IOUserClient::clientHasPrivilege(owningTask, kIOClientPrivilegeAdministrator);
-    if (priv != kIOReturnSuccess) {
-        IOLog("%s call failed %08x\n", __PRETTY_FUNCTION__, priv);
-        return false;
-    }
-
-    client = owningTask;
-    task_reference (client);
-
-    return true;
-}
-
-bool IOHIDStackShotUserClient::start( IOService * _owner )
-{
-    if( !super::start( _owner ))
-	return( false);
-
-    owner = (IOHIDSystem *) _owner;
-
-    return( true );
-}
-
-IOReturn IOHIDStackShotUserClient::clientClose( void )
-{
-   if (client) {
-        task_deallocate(client);
-        client = 0;
-    }
-
-    if (owner)
-        detach(owner);
-    owner = NULL;
-
-    return( kIOReturnSuccess);
-}
-
-IOService * IOHIDStackShotUserClient::getService( void )
-{
-    return(owner);
-}
-
-
-IOReturn IOHIDStackShotUserClient::registerNotificationPort(
-		mach_port_t 	port,
-		UInt32		type,
-		UInt32		refCon __unused )
-{
-    if( type != kIOHIDStackShotNotification)
-	return( kIOReturnUnsupported);
-    if (!owner)
-        return kIOReturnOffline;
-    owner->setStackShotPort(port);
-    return( kIOReturnSuccess);
-}
-
-/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 enum { kIOHIDEventSystemKernelQueueID = 100, kIOHIDEventSystemUserQueueID = 200 };
 
@@ -408,44 +361,78 @@ IOHIDEventSystemUserClient::copyDataQueueWithID(UInt32 queueID)
 bool IOHIDEventSystemUserClient::
 initWithTask(task_t owningTask, void * /* security_id */, UInt32 /* type */)
 {
-    if ( !super::init() ) {
-        return false;
+    bool result = false;
+    
+    OSObject* entitlement = copyClientEntitlement(owningTask, kIOHIDSystemUserAccessServiceEntitlement);
+    if (entitlement) {
+        result = (entitlement == kOSBooleanTrue);
+        entitlement->release();
     }
-
-    IOReturn priv = IOUserClient::clientHasPrivilege(owningTask, kIOClientPrivilegeAdministrator);
-    if (priv != kIOReturnSuccess) {
-        IOLog("%s: Client task not privileged to open IOHIDSystem for mapping memory (%08x)\n", __PRETTY_FUNCTION__, priv);
-        return false;
+    if (!result) {
+        proc_t      process;
+        process = (proc_t)get_bsdtask_info(owningTask);
+        char name[255];
+        bzero(name, sizeof(name));
+        proc_name(proc_pid(process), name, sizeof(name));
+        HIDLogError("%s is not entitled", name);
+        goto exit;
     }
-
-
-    client = owningTask;
-    task_reference (client);
-
-    return true;
+    
+    result = super::init();
+    require_action(result, exit, HIDLogError("failed"));
+    
+exit:
+    return result;
 }
 
-bool IOHIDEventSystemUserClient::start( IOService * _owner )
+bool IOHIDEventSystemUserClient::start( IOService * provider )
 {
-    if( !super::start( _owner ))
-	return( false);
-
-    owner = (IOHIDSystem *) _owner;
+    if( !super::start( provider )) {
+      return( false);
+    }
+  
+    owner = (IOHIDSystem *) provider;
+    if (owner) {
+        owner->retain();
+    }
+  
+  
+    IOWorkLoop * workLoop = getWorkLoop();
+    if (workLoop == NULL)
+    {
+       return false;
+    }
+  
+    commandGate = IOCommandGate::commandGate(this);
+    if (commandGate == NULL)
+    {
+       return false;
+    }
+  
+    if (workLoop->addEventSource(commandGate) != kIOReturnSuccess) {
+       return false;
+    }
 
     return( true );
 }
 
+
+void IOHIDEventSystemUserClient::stop( IOService * provider )
+{
+    IOWorkLoop * workLoop = getWorkLoop();
+    if (workLoop && commandGate)
+    {
+        workLoop->removeEventSource(commandGate);
+    }
+}
+
 IOReturn IOHIDEventSystemUserClient::clientClose( void )
 {
-   if (client) {
-        task_deallocate(client);
-        client = 0;
-    }
 
-    if (owner)
-        detach(owner);
-    owner = NULL;
-
+//    if (owner)
+//        detach(owner);
+//    owner = NULL;
+    terminate();
     return( kIOReturnSuccess);
 }
 
@@ -506,12 +493,21 @@ IOExternalMethod * IOHIDEventSystemUserClient::getTargetAndMethodForIndex(
     return( (IOExternalMethod *)(methodTemplate + index) );
 }
 
-IOReturn IOHIDEventSystemUserClient::createEventQueue(void*p1,void*p2,void*p3,void*,void*,void*)
+
+IOReturn IOHIDEventSystemUserClient::createEventQueue(void*p1,void*p2,void*p3,void*,void*,void*) {
+  IOReturn status = kIOReturnSuccess;
+  if (!isInactive() && commandGate) {
+    status = commandGate->runAction(OSMemberFunctionCast(IOCommandGate::Action, this, &IOHIDEventSystemUserClient::createEventQueueGated),p1, p2, p3, NULL);
+  }
+  return status;
+}
+
+IOReturn IOHIDEventSystemUserClient::createEventQueueGated(void*p1,void*p2,void*p3, void*)
 {
     UInt32          type        = (uintptr_t)p1;
     IOByteCount     size        = (uintptr_t)p2;
     UInt32 *        pToken      = (UInt32 *)p3;
-	UInt32			token       = 0;
+    UInt32          token       = 0;
     IODataQueue *   eventQueue  = NULL;
 
     if( !size )
@@ -557,7 +553,15 @@ IOReturn IOHIDEventSystemUserClient::createEventQueue(void*p1,void*p2,void*p3,vo
     return kIOReturnSuccess;
 }
 
-IOReturn IOHIDEventSystemUserClient::destroyEventQueue(void*p1,void*p2,void*,void*,void*,void*)
+IOReturn IOHIDEventSystemUserClient::destroyEventQueue(void*p1,void*p2,void*,void*,void*,void*) {
+  IOReturn status = kIOReturnSuccess;
+  if (!isInactive() && commandGate) {
+    status = commandGate->runAction(OSMemberFunctionCast(IOCommandGate::Action, this, &IOHIDEventSystemUserClient::destroyEventQueueGated),p1, p2);
+  }
+  return status;
+}
+
+IOReturn IOHIDEventSystemUserClient::destroyEventQueueGated(void*p1,void*p2,void*,void*)
 {
     UInt32          type       = (uintptr_t) p1;
     UInt32          queueID    = (uintptr_t) p2;
@@ -601,11 +605,15 @@ IOReturn IOHIDEventSystemUserClient::tickle(void*p1,void*,void*,void*,void*,void
      *   If the display is off, only tickle on key presses and button clicks.
      */
     intptr_t otherType = NX_NULLEVENT;
-    if (eventType == kIOHIDEventTypeButton)
+    if (eventType == kIOHIDEventTypeButton) {
         otherType = NX_LMOUSEDOWN;
-    else if (eventType == kIOHIDEventTypeKeyboard)
+    } else if (eventType == kIOHIDEventTypeKeyboard) {
         otherType = NX_KEYDOWN;
-
+    } else if (eventType == kIOHIDEventTypePointer) {
+        otherType = NX_MOUSEMOVED;
+    } else if (eventType == kIOHIDEventTypeScroll) {
+        otherType = NX_SCROLLWHEELMOVED;
+    }
     if (otherType)
     {
         IOHIDSystemActivityTickle(otherType, this);
@@ -625,14 +633,17 @@ void IOHIDEventSystemUserClient::free()
     }
 
     if ( userQueues ) {
-		OSObject * obj;
-		while ((obj = userQueues->getAnyObject()))
-		{
-			removeIDForDataQueue(OSDynamicCast(IODataQueue, obj));
-			userQueues->removeObject(obj);
-		}
+        OSObject * obj;
+        while ((obj = userQueues->getAnyObject()))
+        {
+            removeIDForDataQueue(OSDynamicCast(IODataQueue, obj));
+            userQueues->removeObject(obj);
+        }
         userQueues->release();
     }
+  
+    OSSafeReleaseNULL(commandGate);
+    OSSafeReleaseNULL(owner);
 
     super::free();
 }

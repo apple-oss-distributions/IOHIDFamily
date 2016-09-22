@@ -45,6 +45,9 @@ bool IOHIDEvent::initWithCapacity(IOByteCount capacity)
 {
     if (!super::init())
         return false;
+    
+    if (capacity >= UINT32_MAX)
+        return false;
 
     if (_data && (!capacity || _capacity < capacity) ) {
         // clean out old data's storage if it isn't big enough
@@ -61,7 +64,7 @@ bool IOHIDEvent::initWithCapacity(IOByteCount capacity)
         return false;
 
     bzero(_data, _capacity);
-    _data->size = _capacity;
+    _data->size = (uint32_t)_capacity;
     _children = NULL;
     
     return true;
@@ -174,9 +177,38 @@ IOHIDEvent * IOHIDEvent::keyboardEvent( AbsoluteTime            timeStamp,
     keyboard->usagePage = usagePage;
     keyboard->usage = usage;
     keyboard->down = down;
+    keyboard->pressCount = 1;
 
     return me;
 }
+
+
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+// IOHIDEvent::keyboardEvent
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+IOHIDEvent * IOHIDEvent::keyboardEvent( AbsoluteTime            timeStamp,
+                                        UInt32                  usagePage,
+                                        UInt32                  usage,
+                                        Boolean                 down,
+                                        UInt8                   pressCount,
+                                        Boolean                 longPress,
+                                        UInt8                   clickSpeed,
+                                        IOOptionBits            options)
+{
+    IOHIDEvent * me = NULL;
+    
+    me = IOHIDEvent::keyboardEvent(timeStamp, usagePage, usage, down, options);
+    
+    if (me) {
+        IOHIDKeyboardEventData * keyboard = (IOHIDKeyboardEventData *)me->_data;
+        keyboard->pressCount = pressCount;
+        SET_SUBFIELD_VALUE(keyboard->flags, longPress, kIOHIDKeyboardLongPressBit, kIOHIDKeyboardLongPressMask);
+        SET_SUBFIELD_VALUE(keyboard->flags, clickSpeed, kIOHIDKeyboardClickSpeedStartBit, kIOHIDKeyboardClickSpeedMask);
+    }
+    
+    return me;
+}
+
 
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 // IOHIDEvent::unicodeEvent
@@ -278,6 +310,24 @@ IOHIDEvent * IOHIDEvent::translationEvent(
                                         IOOptionBits            options)
 {
     return IOHIDEvent::_axisEvent(      kIOHIDEventTypeTranslation,
+                                        timeStamp,
+                                        x,
+                                        y,
+                                        z,
+                                        options);
+}
+
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+// IOHIDEvent::scrollEvet
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+IOHIDEvent * IOHIDEvent::scrollEventWithFixed(
+                                        AbsoluteTime            timeStamp,
+                                        IOFixed                 x,
+                                        IOFixed                 y,
+                                        IOFixed                 z,
+                                        IOOptionBits            options)
+{
+    return IOHIDEvent::_axisEvent(      kIOHIDEventTypeScroll,
                                         timeStamp,
                                         x,
                                         y,
@@ -424,6 +474,34 @@ IOHIDEvent * IOHIDEvent::ambientLightSensorEvent(
 }
 
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+// IOHIDEvent::ambientLightSensorEvent
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+IOHIDEvent * IOHIDEvent::ambientLightSensorEvent(
+                                        AbsoluteTime            timeStamp,
+                                        UInt32                  level,
+                                        IOHIDEventColorSpace    colorSpace,
+                                        IOHIDDouble             colorComponent0,
+                                        IOHIDDouble             colorComponent1,
+                                        IOHIDDouble             colorComponent2,
+                                        IOOptionBits            options)
+{
+    IOHIDEvent *me = new IOHIDEvent;
+
+    if (me && !me->initWithTypeTimeStamp(kIOHIDEventTypeAmbientLightSensor, timeStamp, options)) {
+        me->release();
+        return 0;
+    }
+
+    IOHIDAmbientLightSensorEventData * event = (IOHIDAmbientLightSensorEventData *)me->_data;
+    event->level = level;
+    event->colorSpace = colorSpace;
+    event->colorComponent0 = colorComponent0;
+    event->colorComponent1 = colorComponent1;
+    event->colorComponent2 = colorComponent2;
+    return me;
+}
+
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 // IOHIDEvent::proximityEvent
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 IOHIDEvent * IOHIDEvent::proximityEvent (
@@ -534,15 +612,74 @@ exit:
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 // IOHIDEvent::relativePointerEvent
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-IOHIDEvent * IOHIDEvent::relativePointerEvent(
+IOHIDEvent * IOHIDEvent::absolutePointerEvent(
+                                              AbsoluteTime            timeStamp,
+                                              IOFixed                 x,
+                                              IOFixed                 y,
+                                              IOFixed                 z,
+                                              UInt32                  buttonState,
+                                              UInt32                  oldButtonState,
+                                              IOOptionBits            options)
+{
+    IOHIDEvent *            event   = NULL;
+    IOHIDPointerEventData * data    = NULL;
+    UInt32                  index, delta;
+    
+    event = new IOHIDEvent;
+    require(event, exit);
+    
+    require(event->initWithTypeTimeStamp(kIOHIDEventTypePointer, timeStamp, options | kIOHIDEventOptionIsAbsolute), exit);
+    
+    data = (IOHIDPointerEventData *)event->_data;
+    require(data, exit);
+    
+    data->position.x = x;
+    data->position.y = y;
+    data->position.z = z;
+    data->button.mask = buttonState;
+    
+    
+    delta = buttonState ^ oldButtonState;
+    for ( index=0; delta; delta>>=1, buttonState>>=1) {
+        IOHIDEvent * subEvent;
+        
+        if ( (delta & 0x1) == 0 )
+            continue;
+        
+        subEvent = buttonEvent(timeStamp, data->button.mask, index+1, (bool)(buttonState&0x1));
+        if ( !subEvent )
+            continue;
+        
+        event->appendChild(subEvent);
+        
+        subEvent->release();
+    }
+    
+exit:
+    if ( !data ) {
+        if ( event ) {
+            event->release();
+            event = NULL;
+        }
+    }
+    return event;
+}
+
+
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+// IOHIDEvent::relativePointerEvent
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+IOHIDEvent * IOHIDEvent::relativePointerEventWithFixed(
                                         AbsoluteTime            timeStamp,
-                                        SInt32                  x,
-                                        SInt32                  y,
-                                        SInt32                  z,
+                                        IOFixed                 x,
+                                        IOFixed                 y,
+                                        IOFixed                 z,
                                         UInt32                  buttonState,
                                         UInt32                  oldButtonState,
                                         IOOptionBits            options)
+
 {
+
     IOHIDEvent *            event   = NULL;
     IOHIDPointerEventData * data    = NULL;
     UInt32                  index, delta;
@@ -555,9 +692,9 @@ IOHIDEvent * IOHIDEvent::relativePointerEvent(
     data = (IOHIDPointerEventData *)event->_data;
     require(data, exit);
 
-    data->position.x = x<<16;
-    data->position.y = y<<16;
-    data->position.z = z<<16;
+    data->position.x = x;
+    data->position.y = y;
+    data->position.z = z;
     data->button.mask = buttonState;
     
     
@@ -585,6 +722,21 @@ exit:
         }
     }
     return event;
+}
+
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+// IOHIDEvent::relativePointerEvent
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+IOHIDEvent * IOHIDEvent::relativePointerEvent(
+                                        AbsoluteTime            timeStamp,
+                                        SInt32                  x,
+                                        SInt32                  y,
+                                        SInt32                  z,
+                                        UInt32                  buttonState,
+                                        UInt32                  oldButtonState,
+                                        IOOptionBits            options)
+{
+     return relativePointerEventWithFixed (timeStamp, x << 16, y << 16, z << 16, buttonState, oldButtonState, options);
 }
 
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -927,6 +1079,7 @@ IOHIDEvent * IOHIDEvent::powerEvent(
     return me;
 }
 
+
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 // IOHIDEvent::vendorDefinedEvent
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -941,10 +1094,9 @@ IOHIDEvent * IOHIDEvent::vendorDefinedEvent(
 {
     UInt32      dataLength  = length;
     IOHIDEvent * me         = new IOHIDEvent;
-
-    if ( dataLength < sizeof(natural_t))
-        dataLength = sizeof(natural_t);
-
+ 
+    //dataLength = ALIGNED_DATA_SIZE(dataLength, sizeof(uint32_t));
+  
     if (me && !me->initWithTypeTimeStamp(kIOHIDEventTypeVendorDefined, timeStamp, options, dataLength)) {
         me->release();
         return 0;
@@ -978,9 +1130,32 @@ IOHIDEvent * IOHIDEvent::biometricEvent(AbsoluteTime timeStamp, IOFixed level, I
 
     event->eventType    = eventType;
     event->level        = level;
+    event->tapCount     = 0;
+    event->usagePage    = 0;
+    event->usage        = 0;
 
     return me;
 }
+
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+// IOHIDEvent::biometricEvent
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+IOHIDEvent * IOHIDEvent::biometricEvent(AbsoluteTime timeStamp, IOFixed level, IOHIDBiometricEventType eventType, UInt32 usagePage, UInt32 usage, UInt8 tapCount, IOOptionBits options)
+{
+    IOHIDEvent *me = IOHIDEvent::biometricEvent(timeStamp, level, eventType, options);
+    
+    if (!me)
+        return 0;
+    
+    IOHIDBiometricEventData *event = (IOHIDBiometricEventData *)me->_data;
+    
+    event->usagePage = usagePage;
+    event->usage = usage;
+    event->tapCount = tapCount;
+    
+    return me;
+}
+
 
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 // IOHIDEvent::atmosphericPressureEvent
@@ -1082,6 +1257,47 @@ exit:
     return me;
 }
 
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+// IOHIDEvent::humidityEvent
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+IOHIDEvent * IOHIDEvent::humidityEvent(AbsoluteTime timeStamp, IOFixed rh, UInt32 sequence, IOOptionBits options)
+{
+    IOHIDEvent *me = new IOHIDEvent;
+    
+    if (me && !me->initWithTypeTimeStamp(kIOHIDEventTypeHumidity, timeStamp, options | kIOHIDEventOptionIsAbsolute)) {
+        me->release();
+        return 0;
+    }
+    
+    IOHIDHumidityEventData *event = (IOHIDHumidityEventData *)me->_data;
+    
+    event->rh = rh;
+    event->sequence = sequence;
+    
+    return me;
+}
+
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+// IOHIDEvent::humidityEvent
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+IOHIDEvent * IOHIDEvent::brightnessEvent(AbsoluteTime timeStamp, IOFixed currentBrightness, IOFixed targetBrightness, UInt64 transitionTime, IOOptionBits options)
+{
+    IOHIDEvent *me = new IOHIDEvent;
+    
+    if (me && !me->initWithTypeTimeStamp(kIOHIDEventTypeBrightness, timeStamp, options)) {
+        me->release();
+        return 0;
+    }
+    
+    IOHIDBrightnessEventData *event = (IOHIDBrightnessEventData *)me->_data;
+    
+    event->currentBrightness = currentBrightness;
+    event->targetBrightness  = targetBrightness;
+    event->transitionTime    = transitionTime;
+  
+    return me;
+}
+
 //==============================================================================
 // IOHIDEvent::appendChild
 //==============================================================================
@@ -1137,6 +1353,22 @@ SInt32 IOHIDEvent::getIntegerValue(     IOHIDEventField         key,
 }
 
 //==============================================================================
+// IOHIDEvent::getDoubleValue
+//==============================================================================
+IOHIDDouble IOHIDEvent::getDoubleValue( IOHIDEventField         key,
+                                        IOOptionBits            options)
+{
+    IOHIDDouble value = 0;
+
+    GET_EVENT_VALUE_FIXED(this, key, value, options);
+  
+    return value;
+}
+
+
+
+
+//==============================================================================
 // IOHIDEvent::getFixedValue
 //==============================================================================
 IOFixed IOHIDEvent::getFixedValue(      IOHIDEventField         key,
@@ -1180,6 +1412,17 @@ void IOHIDEvent::setFixedValue(         IOHIDEventField         key,
                                         IOOptionBits            options)
 {
     SET_EVENT_VALUE_FIXED(this, key, value, options);
+}
+//==============================================================================
+// IOHIDEvent::setDoubleValue
+//==============================================================================
+void IOHIDEvent::setDoubleValue( IOHIDEventField         key,
+                                 IOHIDDouble             value,
+                                 IOOptionBits            options)
+{
+
+    SET_EVENT_VALUE_FIXED(this, key, value, options);
+  
 }
 
 //==============================================================================

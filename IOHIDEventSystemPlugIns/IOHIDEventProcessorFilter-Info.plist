@@ -20,19 +20,19 @@
 	<string>1</string>
 	<key>CFPlugInFactories</key>
 	<dict>
-		<key>5512668E-FF47-4E70-B33E-E1FFFAEF01A8</key>
-		<string>IOHIDAccessibilityFilterFactory</string>
+		<key>7DCF18B5-07BE-4FF5-87CF-44B3C17C9216</key>
+		<string>IOHIDEventProcessorFactory</string>
 	</dict>
 	<key>CFPlugInTypes</key>
 	<dict>
 		<key>6B0340D3-5798-4064-AA17-9204C7B06FFD</key>
-		<string>5512668E-FF47-4E70-B33E-E1FFFAEF01A8</string>
+		<string>7DCF18B5-07BE-4FF5-87CF-44B3C17C9216</string>
 	</dict>
 	<key>CFPlugInDynamicRegistration</key>
 	<string>NO</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2013 Apple Inc. All rights reserved.</string>
-	<key>CFBundleIdentifier - 2</key>
+	<key>CFBundleIdentifier</key>
 	<string>com.apple.iokit.hid.${PRODUCT_NAME:rfc1034identifier}</string>
 </dict>
 </plist>
