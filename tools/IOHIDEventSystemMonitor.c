@@ -36,6 +36,7 @@ static int64_t                      __nxTypeMask        = -1;
 static int64_t                      __nxUsageMask       = -1;
 static boolean_t                    __filter            = false;
 static boolean_t                    __virtualService    = false;
+static boolean_t                    __verboseMode       = true;
 static IOHIDEventSystemClientType   __clientType        = kIOHIDEventSystemClientTypeMonitor;
 static struct {
     uint32_t usagePage;
@@ -63,6 +64,7 @@ static CFBooleanRef                 __boolValue                                 
 
 boolean_t isNXEvent (IOHIDEventRef event);
 void printNXEventInfo (IOHIDEventRef event);
+void printNXEvents (IOHIDEventRef event);
 void serviceRemovalCallback(void * target, void * refcon, IOHIDServiceRef service);
 
 
@@ -94,7 +96,7 @@ void printNXEventInfo (IOHIDEventRef event) {
       {
          CFStringRef nxEventDescription;
          if (nxEventLength == sizeof(NXEventExt)) {
-            nxEventDescription = NxEventExtCreateDescription (nxEvent);
+            nxEventDescription = NxEventExtCreateDescription ((NXEventExt *)nxEvent);
          } else {
             nxEventDescription = NxEventCreateDescription (nxEvent);
          }
@@ -184,7 +186,8 @@ IOHIDEventBlock eventBlock = ^(void * target __unused, void * refcon, void * sen
 
 IOHIDEventFilterBlock eventFilterBlock = ^ boolean_t (void * target, void * refcon __unused, void * sender, IOHIDEventRef event)
 {
-    eventBlock(target, true, sender, event);
+    bool val = true;
+    eventBlock(target, &val, sender, event);
     
     return false;
 };
@@ -227,12 +230,15 @@ IOHIDServiceClientBlock serviceClientBlock =  ^(void * target __unused, void * r
                 IOHIDServiceClientSetProperty(service, __propertyKey, __numericValue);
         }
     }
-    printf("SERVICE %s:\n", (char *)refcon);
     
-    string = CFCopyDescription(service);
-    if ( string ) {
-        printf("%s\n", CFStringGetCStringPtr(string, kCFStringEncodingMacRoman));
-        CFRelease(string);
+    if (__verboseMode) {
+        printf("SERVICE %s:\n", (char *)refcon);
+        
+        string = CFCopyDescription(service);
+        if ( string ) {
+            printf("%s\n", CFStringGetCStringPtr(string, kCFStringEncodingMacRoman));
+            CFRelease(string);
+        }
     }
 };
 
@@ -243,12 +249,14 @@ void serviceRemovalCallback(void * target __unused, void * refcon __unused, IOHI
 
     CFDictionaryRemoveValue(__serviceNotifications, service);
     
-    printf("SERVICE %s:\n", (char *)kRemoved);
-    
-    string = CFCopyDescription(service);
-    if ( string ) {
-        printf("%s\n", CFStringGetCStringPtr(string, kCFStringEncodingMacRoman));
-        CFRelease(string);
+    if (__verboseMode) {
+        printf("SERVICE %s:\n", (char *)kRemoved);
+        
+        string = CFCopyDescription(service);
+        if ( string ) {
+            printf("%s\n", CFStringGetCStringPtr(string, kCFStringEncodingMacRoman));
+            CFRelease(string);
+        }
     }
 }
 
@@ -266,12 +274,14 @@ static void servicesAddedCallback(void * target __unused, void * refcon __unused
             CFRelease(notification);
         }
         
-        printf("SERVICE %s:\n", (char *)kAdded);
-        
-        string = CFCopyDescription(service);
-        if ( string ) {
-            printf("%s\n", CFStringGetCStringPtr(string, kCFStringEncodingMacRoman));
-            CFRelease(string);
+        if (__verboseMode) {
+            printf("SERVICE %s:\n", (char *)kAdded);
+
+            string = CFCopyDescription(service);
+            if ( string ) {
+                printf("%s\n", CFStringGetCStringPtr(string, kCFStringEncodingMacRoman));
+                CFRelease(string);
+            }
         }
     }
 }
@@ -280,12 +290,14 @@ static void connectionAddedCallback(void * target __unused, void * refcon __unus
 {
     CFStringRef string;
 
-    printf("CONNECTION %s:\n", (char *)kAdded);
-    
-    string = CFCopyDescription(connection);
-    if ( string ) {
-        printf("%s\n", CFStringGetCStringPtr(string, kCFStringEncodingMacRoman));
-        CFRelease(string);
+    if (__verboseMode) {
+        printf("CONNECTION %s:\n", (char *)kAdded);
+        
+        string = CFCopyDescription(connection);
+        if ( string ) {
+            printf("%s\n", CFStringGetCStringPtr(string, kCFStringEncodingMacRoman));
+            CFRelease(string);
+        }
     }
 }
 
@@ -293,12 +305,14 @@ static void connectionRemovedCallback(void * target __unused, void * refcon __un
 {
     CFStringRef string;
     
-    printf("CONNECTION %s:\n", (char *)kRemoved);
-    
-    string = CFCopyDescription(connection);
-    if ( string ) {
-        printf("%s\n", CFStringGetCStringPtr(string, kCFStringEncodingMacRoman));
-        CFRelease(string);
+    if (__verboseMode) {
+        printf("CONNECTION %s:\n", (char *)kRemoved);
+        
+        string = CFCopyDescription(connection);
+        if ( string ) {
+            printf("%s\n", CFStringGetCStringPtr(string, kCFStringEncodingMacRoman));
+            CFRelease(string);
+        }
     }
 }
 
@@ -625,7 +639,7 @@ exit:
 
 static void listAllClientsWithSystem(IOHIDEventSystemClientRef eventSystem)
 {
-    CFIndex     types, index;
+    CFIndex     index;
     CFArrayRef  clients = NULL;
 
     require(eventSystem, exit);
@@ -880,14 +894,19 @@ static void printStatistics()
 
 static void exitTimerCallback(CFRunLoopTimerRef timer __unused, void *info __unused)
 {
-    printStatistics();
+    if (__verboseMode) {
+        printStatistics();
+    }
+
     exit(0);
 }
 
 static void signalHandler(int type)
 {
     if (type == SIGINT) {
-        printStatistics();
+        if (__verboseMode) {
+            printStatistics();
+        }
         exit(0);
     }
 }
@@ -896,18 +915,19 @@ static void printHelp()
 {
     printf("\n");
     printf("hidEventSystemMonitor usage:\n\n");
-    printf("\t-up <usage page>\t: Device usage page\n");
-    printf("\t-u <usage>\t: Device usage\n");
-    printf("\t-b <1 | 0>\t: 1=built-in 0=not built-in\n");
+    printf("\t-up <usage page>\t\t: Device usage page\n");
+    printf("\t-u <usage>\t\t\t: Device usage\n");
+    printf("\t-b <1 | 0>\t\t\t: 1=built-in 0=not built-in\n");
     printf("\t-m <event type mask ...>\t: monitor all events contained in mask\n");
     printf("\t-e <event type number ...>\t: monitor all events of the passed type\n");
     printf("\t-nm <event type mask>\t\t: monitor all events except those contained in mask\n");
     printf("\t-ne <event type number>\t\t: monitor all events except those of the passed type\n");
     printf("\t-d <event type number>\t\t: dispatch event of the passed type\n");
     printf("\t-dm <event type number>\t\t: dispatch events of the passed mask\n");
-    printf("\t-k <string>\t\t: Key to be used with -bp or -np options for setting properties\n");
-    printf("\t-bp <0/1>\t\t:Boolean to use with -k option\n");
-    printf("\t-np <number>\t\t: Numeric value, use with -k option\n");
+    printf("\t-do \t\t\t\t: exit after dispatching events with -d, -dm\n");
+    printf("\t-k <string>\t\t\t: Key to be used with -bp or -np options for setting properties\n");
+    printf("\t-bp <0/1>\t\t\t: Boolean to use with -k option\n");
+    printf("\t-np <number>\t\t\t: Numeric value, use with -k option\n");
 #if !TARGET_OS_EMBEDDED
     printf("\t-nxtype <NX event type number> monitor all NX events with type\n");
     printf("\t-nxusage <NX event usage number> monitor all NX events with usage\n");
@@ -915,6 +935,7 @@ static void printHelp()
     printf("\t-p\t\t\t\t: persist event dispatch\n");
     printf("\n");
     printf("\t-a\t\t\t\t: Admin (Unfiltered event stream)\n");
+    printf("\t-q\t\t\t\t: quiet (do not print services / event statistics\n");
     printf("\t-r\t\t\t\t: Rate Controlled\n");
     printf("\n");
     printf("\t-s\t\t\t\t: Instantiate HID event server\n");
@@ -923,7 +944,7 @@ static void printHelp()
     printf("\n");
     printf("\t-lc\t\t\t\t: List clients\n");
     printf("\t-ls\t\t\t\t: List services\n");
-    printf("\t-S <interval>: Set sample interval\n");
+    printf("\t-S <interval>\t\t\t: Set sample interval\n");
     printf("\t-V\t\t\t\t: Version\n");
     printf("\n\tAvailable Event Types:\n");
     
@@ -1005,6 +1026,9 @@ int main (int argc __unused, const char * argv[] __unused)
             else if ( !strcmp("-v", arg ) ) {
                 __virtualService = true;
             }
+            else if ( !strcmp("-q", arg ) ) {
+                __verboseMode = false;
+            }
             else if ( !strcmp("-r", arg ) ) {
                 __clientType = kIOHIDEventSystemClientTypeRateControlled;
             }
@@ -1015,9 +1039,6 @@ int main (int argc __unused, const char * argv[] __unused)
                 registrationType = kEventRegistrationTypeUsagePage;
             }
             else if ( !strcmp("-u", arg ) ) {
-                registrationType = kEventRegistrationTypeUsage;
-            }
-            else if ( !strcmp("-d", arg ) ) {
                 registrationType = kEventRegistrationTypeUsage;
             }
             else if ( !strcmp("-b", arg) ) {
@@ -1198,14 +1219,18 @@ int main (int argc __unused, const char * argv[] __unused)
     }
     
     if ( runAsClient ) {
-        printf("***************************************************************************\n");
-        printf("Running as a %s client\n", IOHIDEventSystemClientGetTypeString(__clientType));
-        printf("***************************************************************************\n");
+        if (__verboseMode) {
+            printf("***************************************************************************\n");
+            printf("Running as a %s client\n", IOHIDEventSystemClientGetTypeString(__clientType));
+            printf("***************************************************************************\n");
+        }
         runClient();
     } else {
-        printf("***************************************************************************\n");
-        printf("Running as server\n");
-        printf("***************************************************************************\n");
+        if (__verboseMode) {
+            printf("***************************************************************************\n");
+            printf("Running as server\n");
+            printf("***************************************************************************\n");
+        }
         runServer();
     }
         

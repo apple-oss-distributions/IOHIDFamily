@@ -40,9 +40,12 @@ class IOHIDEventServiceQueue: public IOSharedDataQueue
 protected:
     IOMemoryDescriptor *    _descriptor;
     Boolean                 _state;
+    uint64_t                _owner;
 
 public:
     static IOHIDEventServiceQueue *withCapacity(UInt32 size);
+    static IOHIDEventServiceQueue *withCapacity(UInt32 size, uint64_t owner);
+    
     virtual void free();
     
     inline Boolean getState() { return _state; }
@@ -52,6 +55,8 @@ public:
 
     virtual IOMemoryDescriptor *getMemoryDescriptor();
     virtual void setNotificationPort(mach_port_t port);
+    virtual bool serialize(OSSerialize * serializer) const;
+
 };
 
 //---------------------------------------------------------------------------

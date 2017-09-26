@@ -14,10 +14,10 @@
 #endif
 #include <IOKit/hidsystem/event_status_driver.h>
 #include <mach/mach_time.h>
-#include <chrono>
 #include <queue>
 #include <IOKit/pwr_mgt/IOPMLib.h>
 #include <IOKit/pwr_mgt/IOPMLibDefs.h>
+#include <IOKit/hid/IOHIDLibPrivate.h>
 #include  <shared_mutex>
 #include "CF.h"
 
@@ -27,10 +27,13 @@
 #define kIOHIDDisplaySleepPolicyUpgradeThresholdMS  (25)
 #define LOG_MAX_ENTRIES                             (50)
 #define kIOHIDDisplayWakeAbortThresholdMS           (50)
+#define kIOHIDDeclareActivityThresholdMS            250
 
 struct LogEntry {
-    std::chrono::time_point<std::chrono::steady_clock>  displayTime;
-    IOHIDEventSenderID  serviceID;
+    struct timeval          time;
+    IOHIDEventSenderID      serviceID;
+    IOHIDEventPolicyValue   policy;
+    IOHIDEventType          eventType;
 };
 
 class IOHIDNXEventTranslatorSessionFilter
@@ -75,26 +78,20 @@ private:
     uint32_t                        _displaySleepAbortThreshold;
     uint32_t                        _displayWakeAbortThreshold;
     static IOPMAssertionID          _AssertionID;
+    uint64_t                        _previousEventTime;
+    uint64_t                        _declareActivityThreshold;
   
     CFMutableDictionaryRefWrap      _modifiers;
     CFMutableDictionaryRefWrap      _companions;
     CFMutableSetRefWrap             _keyboards;
     CFMutableSetRefWrap             _reportModifiers;
     CFMutableSetRefWrap             _updateModifiers;
-  
-  
-    //typedef  std::chrono::steady_clock clock_type_;
-    typedef  std::chrono::steady_clock clock;
-    typedef  std::chrono::time_point<std::chrono::steady_clock> time_point;
-    #define  duration_cast_ms std::chrono::duration_cast<std::chrono::milliseconds>
-    #define  duration_cast_us std::chrono::duration_cast<std::chrono::microseconds>
+    IOHIDServiceRef                 _dfr;
     
-    time_point _powerStateChangeTime;
-    time_point _displayStateChangeTime;
-    time_point _displayTickleTime;
-    uint64_t   _maxDisplayTickleDuration;
-  
-    std::queue<LogEntry> _displayLog;
+    uint64_t    _powerStateChangeTime;
+    uint64_t    _displayStateChangeTime;
+    
+    IOHIDSimpleQueueRef             _displayLog;
     
 private:
 
@@ -118,7 +115,7 @@ private:
     void updateModifiers();
     void updateButtons();
     void updateActivity (bool active);
-    void updateDisplayLog(IOHIDEventSenderID serviceID);
+    void updateDisplayLog(IOHIDEventSenderID serviceID, IOHIDEventPolicyValue policy, IOHIDEventType eventType);
     
     IOHIDServiceRef getCompanionService(IOHIDServiceRef service);
     
@@ -130,15 +127,12 @@ private:
     static void displayMatchNotificationCallback (void * refcon, io_iterator_t iterator);
     static void displayNotificationCallback (void * refcon, io_service_t	service, uint32_t messageType, void * messageArgument);
     void displayNotificationCallback (io_service_t	service, uint32_t messageType, void * messageArgument);
-    void displayTickle ();
-    IOHIDEventRef displayStateFilter (IOHIDEventRef  event);
+    IOHIDEventRef displayStateFilter (IOHIDServiceRef sender, IOHIDEventRef  event);
   
     boolean_t shouldCancelEvent (IOHIDEventRef  event);
+    boolean_t resetStickyKeys(IOHIDEventRef event);
  
     void serialize (CFMutableDictionaryRef dict) const;
-    static std::string timePointToTimeString (time_point pt);
-  
-  
   
 private:
     IOHIDNXEventTranslatorSessionFilter();

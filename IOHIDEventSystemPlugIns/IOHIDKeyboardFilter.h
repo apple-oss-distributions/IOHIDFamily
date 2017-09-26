@@ -29,8 +29,7 @@
     kIOHIDKeyboardStickyKeyLocked   | \
     kIOHIDKeyboardStickyKeyUp       | \
     kIOHIDKeyboardStickyKeysOn      | \
-    kIOHIDKeyboardStickyKeysOff     | \
-    kIOHIDKeyboardDelayedKey        )
+    kIOHIDKeyboardStickyKeysOff     )
 
 enum {
     kStickyKeysEnableCount = 5,
@@ -45,11 +44,6 @@ enum {
     kStickyKeyState_Down_Locked     = 1 << 3,
     // State where modifier pressed and hold  and non modifier key was already dispatched at least once.
     kStickyKeyState_Down_Unlocked   = 1 << 4
-};
-
-struct KeyAttribute {
-    uint32_t  _flags;
-    KeyAttribute (uint32_t  flags = 0):_flags(flags) {};
 };
 
 typedef UInt32 StickyKeyState;
@@ -86,6 +80,7 @@ private:
     IOHIDServiceFilterPlugInInterface *_serviceInterface;
     CFUUIDRef                   _factoryID;
     UInt32                      _refCount;
+    SInt32                      _matchScore;
 
     static IOHIDServiceFilterPlugInInterface sIOHIDKeyboardFilterFtbl;
     static HRESULT QueryInterface( void *self, REFIID iid, LPVOID *ppv );
@@ -175,8 +170,8 @@ private:
 
   
     void dispatchStickyKeys(int stateMask);
-    uint32_t processStickyKeyUp(UInt32 usagePage, UInt32 usage);
-    uint32_t processStickyKeyDown(UInt32 usagePage, UInt32 usage);
+    UInt32 processStickyKeyUp(UInt32 usagePage, UInt32 usage, UInt32 &flags);
+    UInt32 processStickyKeyDown(UInt32 usagePage, UInt32 usage, UInt32 &flags);
     void processStickyKeys(void);
     void processShiftKey(void);
     void updateStickyKeysState(StickyKeyState from, StickyKeyState to);
@@ -199,11 +194,9 @@ private:
     void resetCapsLockDelay(void);
     
   
-    KeyMap createMapFromModifiersMap(CFArrayRef mappings);
+    KeyMap createMapFromArrayOfPairs(CFArrayRef mappings);
     KeyMap createMapFromStringMap(CFStringRef mappings);
-    KeyMap createMapFromUserDefinedMap(CFArrayRef mappings);
     IOHIDEventRef processKeyMappings(IOHIDEventRef event);
-    //void setModifierMappings(CFArrayRef mappings);
 
 #if !TARGET_OS_EMBEDDED
     IOHIDEventRef   processEjectKeyDelay(IOHIDEventRef event);
@@ -214,9 +207,9 @@ private:
     uint32_t getKeyboardID ();
     uint32_t getKeyboardID (uint16_t productID, uint16_t vendorID);
     bool isModifiersPressed ();
-
 #endif
-
+    
+    bool isDelayedEvent(IOHIDEventRef event);
     bool isKeyPressed (Key key);
     void serialize (CFMutableDictionaryRef  dict) const;
     CFMutableArrayRefWrap serializeMapper (const KeyMap &mapper) const;

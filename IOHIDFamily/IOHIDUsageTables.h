@@ -960,7 +960,8 @@ enum
     kHIDUsage_Csmr_ALOnlineActivityBrowswer= 0x1C5, /* Selector */
     kHIDUsage_Csmr_ALResearchOrSearchBrowswer   = 0x1C6, /* Selector */
     kHIDUsage_Csmr_ALAudioPlayer= 0x1C7, /* Selector */
-    /* 0x1C8 - 0x1FF Reserved */
+    kHIDUsage_Csmr_ALNavigation = 0x1C8, /* Selector */
+    /* 0x1C9 - 0x1FF Reserved */
     kHIDUsage_Csmr_GenericGUIApplicationControls    = 0x200,    /* Named Array */
     kHIDUsage_Csmr_ACNew    = 0x201,    /* Selector */
     kHIDUsage_Csmr_ACOpen    = 0x202,    /* Selector */
@@ -1103,7 +1104,8 @@ enum
     kHIDUsage_Csmr_ACDistributeH    = 0x29B,    /* Selector */
     kHIDUsage_Csmr_ACDistributeV    = 0x29C,    /* Selector */
     kHIDUsage_Csmr_ACKeyboardLayoutSelect   = 0x29D,    /* One-Shot Control */
-    /* 0x29E - 0xFFFF Reserved */
+    kHIDUsage_Csmr_ACNavigationGuidance     = 0x29E,    /* Selector */
+    /* 0x29F - 0xFFFF Reserved */
     kHIDUsage_Csmr_Reserved = 0xFFFF
 };
 
@@ -1351,7 +1353,7 @@ enum
     kHIDUsage_AD_Reserved = 0xFFFF
 };
 
-/* Sensor Page (0x14) */
+/* Sensor Page (0x20) */
 /* The Sensor page is intended for use by devices that capture biometric, electrical, environmental, light, location, mechanical, motion, orientation, scanner, etc events. */
 enum
 {
@@ -1549,9 +1551,18 @@ enum
     kHIDUsage_Snsr_Property_PowerState_D3_Sleep                 = 0x0854,
     kHIDUsage_Snsr_Property_PowerState_D4_PowerOff              = 0x0855,
     /* 0x0855 - 0x085F Reserved */
+    kHIDUsage_Snsr_Light_Illuminance                            = 0x04D1,
     
     /* Specific Sensor Type Data Fields */
-    /*** TODO ***/
+    
+    /* Biometric Sensor Data Fields */
+    kHIDUsage_Snsr_Data_Biometric                               = 0x04B0,
+    kHIDUsage_Snsr_Data_Biometric_HumanPresence                 = 0x04B1,
+    kHIDUsage_Snsr_Data_Biometric_HumanProximityRange           = 0x04B2,
+    kHIDUsage_Snsr_Data_Biometric_HumanProximityOutOfRange      = 0x04B3,
+    kHIDUsage_Snsr_Data_Biometric_HumanTouchState               = 0x04B4,
+    /* 0x04B5 - 0x04CF Reserved */
+    
 };
 
 /* Power Device Page (0x84) */
@@ -1565,7 +1576,8 @@ enum
     kHIDUsage_PD_ChangedStatus = 0x03,            /* CA- Power Device Changed Status */
     kHIDUsage_PD_UPS = 0x04,                    /* CA- Uninterruptible Power Supply */
     kHIDUsage_PD_PowerSupply = 0x05,            /* CA- Power Supply */
-    /* Reserved 0x06 - 0x0F */
+    kHIDUsage_PD_PeripheralDevice = 0x06,       /* CA- Perpheral Device */
+    /* Reserved 0x07 - 0x0F */
     kHIDUsage_PD_BatterySystem = 0x10,            /* CP- Battery System power module */
     kHIDUsage_PD_BatterySystemID = 0x11,        /* SV IF- Battery System ID */
     kHIDUsage_PD_Battery = 0x12,                /* CP- Battery */

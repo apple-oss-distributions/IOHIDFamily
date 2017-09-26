@@ -95,7 +95,10 @@ protected:
     bool                    _isInterruptReportHandler;
     
     bool                    _shouldTickleActivity;
-    
+  
+    bool                    _variableSize;
+    UInt32                  _currentReportSizeBits;
+  
     struct {
         SInt32     satMin;
         SInt32     satMax;
@@ -134,9 +137,8 @@ protected:
     bool            initIterator(void * iterationContext) const;
     bool            getNextObjectForIterator(void      * iterationContext,
                                              OSObject ** nextObject) const;
-    
-        
 public:
+
     static IOHIDElementPrivate * buttonElement(
                                 IOHIDDevice *    owner,
                                 IOHIDElementType type,
@@ -260,6 +262,7 @@ public:
     virtual UInt32                          getValue();
     virtual UInt32                          getValue(IOOptionBits options);
     virtual OSData *                        getDataValue();
+    virtual OSData *                        getDataValue(IOOptionBits options);
     virtual void                            setValue(UInt32 value);
     virtual void                            setDataValue(OSData * value);
     virtual bool                            conformsTo(UInt32 usagePage, UInt32 usage=0);
@@ -277,6 +280,9 @@ public:
                                 unsigned   mask,
                                 void     * context = 0);
     virtual OSCollection *copyCollection(OSDictionary * cycleDict = 0);
+  
+    virtual boolean_t                               isVariableSize()
+    {  return _variableSize; }
 };
 
 #endif /* !_IOKIT_HID_IOHIDELEMENTPRIVATE_H */

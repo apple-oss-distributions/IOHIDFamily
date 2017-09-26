@@ -164,6 +164,7 @@ __BEGIN_DECLS
 #define kIOHIDElementValueLocationKey               "ValueLocation"
 #define kIOHIDElementDuplicateIndexKey              "DuplicateIndex"
 #define kIOHIDElementParentCollectionKey            "ParentCollection"
+#define kIOHIDElementVariableSizeKey                "VariableSize"
 
 #ifndef __ppc__
     #define kIOHIDElementVendorSpecificKey          "VendorSpecific"
@@ -383,10 +384,12 @@ typedef uint32_t IOHIDStandardType;
  @abstract Describes different types of scaling that can be performed on element values.
  @constant kIOHIDValueScaleTypeCalibrated Type for value that is scaled with respect to the calibration properties.
  @constant kIOHIDValueScaleTypePhysical Type for value that is scaled with respect to the physical min and physical max of the element.
+ @constant kIOHIDValueScaleTypeExponent Type for value that is scaled with respect to the element's unit exponent.
  */
 enum {
     kIOHIDValueScaleTypeCalibrated,
-    kIOHIDValueScaleTypePhysical
+    kIOHIDValueScaleTypePhysical,
+    kIOHIDValueScaleTypeExponent
 };
 typedef uint32_t IOHIDValueScaleType;
 
@@ -397,7 +400,8 @@ typedef uint32_t IOHIDValueScaleType;
  */
 enum {
     kIOHIDValueOptionsFlagRelativeSimple    = (1<<0),
-    kIOHIDValueOptionsFlagPrevious          = (1<<1)
+    kIOHIDValueOptionsFlagPrevious          = (1<<1),
+    kIOHIDValueOptionsUpdateElementValues   = (1<<2)
 };
 typedef uint32_t IOHIDValueOptions;
 
@@ -415,33 +419,6 @@ typedef uint32_t IOHIDValueOptions;
  */
 #define kIOHIDKeyboardCapsLockDelay         "CapsLockDelay"
 #define kIOHIDKeyboardEjectDelay            "EjectDelay"
-
-/*!
- @defined Press count tracking keys
- @abstract Keys used to set the parameters for press count tracking
- @discussion CFBoolean value for kIOHIDKeyboardPressCountTrackingEnabledKey is used to turn on the feature or turn it off
-    CFArray value for kIOHIDKeyboardPressCountUsagePairsKey stores 32bit CFNumbers (UsagePage<<16)|Usage designating the keyboard events to process
-    If kIOHIDKeyboardPressCountUsagePairsKey is not set, all keyboard events will be processed
-    kIOHIDKeyboardPressCountTriplePressTimeoutKey and kIOHIDKeybaordPressCountDoublePressTimeoutKey take CFNumberRef values
-    The numbers represent the timeout values for determining the value kIOHIDEventFieldKeyboardPressCount
-    kIOHIDKeyboardLongPressTimeoutKey value is used to determine the timeout for long presses
- */
-#define kIOHIDKeyboardPressCountTrackingEnabledKey      "PressCountTrackingEnabled"
-#define kIOHIDKeyboardPressCountUsagePairsKey           "PressCountUsagePairs"
-#define kIOHIDKeyboardPressCountTriplePressTimeoutKey   "PressCountTriplePressTimeout"
-#define kIOHIDKeyboardPressCountDoublePressTimeoutKey   "PressCountDoublePressTimeout"
-#define kIOHIDKeyboardLongPressTimeoutKey               "LongPressTimeout"
-
-/*!
- @defined Tap count tracking keys
- @abstract Keys used to set the parameters for tap count tracking
- @discussion CFBoolean value for kIOHIDBiometricTapTrackingEnabledKey is used to turn on the feature or turn it off
- kIOHIDBiometricDoubleTapTimeoutKey and kIOHIDBiometricTripleTapTimeoutKey take CFNumberRef values
- The numbers represent the timeout values for determining the value kIOHIDEventFieldBiometricTapCount
- */
-#define kIOHIDBiometricTapTrackingEnabledKey            "TapTrackingEnabled"
-#define kIOHIDBiometricDoubleTapTimeoutKey              "DoubleTapTimeout"
-#define kIOHIDBiometricTripleTapTimeoutKey              "TripleTapTimeout"
 
 /*!
     @defined kFnFunctionUsageMapKey
@@ -463,6 +440,13 @@ typedef uint32_t IOHIDValueOptions;
 
 #define kKeyboardUsageMapKey        "KeyboardUsageMap"
 
+/*!
+ @defined kIOHIDDeviceOpenedByEventSystemKey
+ @abstract Property set when corresponding event service object opened by HID event system
+ @discussion boolean value
+ 
+ */
+#define  kIOHIDDeviceOpenedByEventSystemKey "DeviceOpenedByEventSystem"
 __END_DECLS
 
 #endif /* !_IOKIT_HID_IOHIDKEYS_H_ */

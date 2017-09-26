@@ -134,7 +134,7 @@ bool CompareDeviceUsage( IOService * owner, OSDictionary * matching, SInt32 * sc
         matches = false;
     }
     
-    OSSafeRelease(obj);
+    OSSafeReleaseNULL(obj);
     return matches;
 }
 
@@ -222,18 +222,18 @@ bool CompareProductID( IOService * owner, OSDictionary * matching, SInt32 * scor
 
 bool CompareNumberPropertyMask( IOService *owner, OSDictionary *matching, const char *key, const char *maskKey, SInt32 *score, SInt32 increment)
 {
-    OSNumber *    registryProperty;
+    OSNumber *    registryProperty = (OSNumber *)owner->copyProperty(key);
     OSNumber *    dictionaryProperty;
     OSNumber *    valueMask;
+    CONVERT_TO_STACK_RETAIN(registryProperty);
     
-    registryProperty = OSDynamicCast(OSNumber,  owner->getProperty(key));
     dictionaryProperty = OSDynamicCast(OSNumber, matching->getObject(key));
     valueMask = OSDynamicCast(OSNumber, matching->getObject(maskKey));
     
     // If the dicitonary or value mask doesn't exist then return true
     if ( dictionaryProperty && valueMask )
     {
-        if ( registryProperty )
+        if ( OSDynamicCast(OSNumber, registryProperty) )
         {
             // If all our values are OSNumbers, then get their actual value and do the masking
             // to see if they are equal
@@ -268,9 +268,9 @@ bool CompareNumberPropertyArray( IOService * owner, OSDictionary * matching, con
         if ( OSDynamicCast(OSNumber, registryProperty ) )
         {
             OSNumber *propertyFromArray;
-            int i = 0;
+            unsigned int i = 0;
             
-            for ( i = 0; i < propertyArray->getCount(); i ++ )
+            for (i = 0; i < propertyArray->getCount(); i ++ )
             {
                 propertyFromArray = OSDynamicCast(OSNumber, propertyArray->getObject(i));
                 if ( propertyFromArray && propertyFromArray->isEqualTo(registryProperty) )
@@ -304,7 +304,7 @@ bool CompareNumberPropertyArrayWithMask( IOService * owner, OSDictionary * match
             UInt32  registryValue = registryProperty->unsigned32BitValue();
             UInt32  mask = valueMask->unsigned32BitValue();
             
-            int i = 0;
+            unsigned int i = 0;
             
             for ( i = 0; i < propertyArray->getCount(); i ++ )
             {
@@ -351,8 +351,8 @@ bool MatchPropertyTable(IOService * owner, OSDictionary * table, SInt32 * score)
     bool    versNumMatch    = CompareProperty(owner, table, kIOHIDVersionNumberKey, &ven3Score, kHIDVendor3ScoreIncrement);
     bool    manMatch        = CompareProperty(owner, table, kIOHIDManufacturerKey, &ven3Score, kHIDVendor3ScoreIncrement);
     bool    serialMatch     = CompareProperty(owner, table, kIOHIDSerialNumberKey, &ven3Score, kHIDVendor3ScoreIncrement);
+    bool    phisicalDeviceUniqueID = CompareProperty(owner, table, kIOHIDPhysicalDeviceUniqueIDKey, &ven3Score, kHIDVendor3ScoreIncrement);
     bool    bootPMatch      = CompareProperty(owner, table, "BootProtocol", score);
-    
     // Compare properties.
     if (!pUPMatch ||
         !pUMatch ||
@@ -366,6 +366,7 @@ bool MatchPropertyTable(IOService * owner, OSDictionary * table, SInt32 * score)
         !manMatch ||
         !serialMatch ||
         !bootPMatch ||
+        !phisicalDeviceUniqueID ||
         (table->getObject("HIDDefaultBehavior") && !owner->getProperty("HIDDefaultBehavior")) ||
         (table->getObject(kIOHIDCompatibilityInterface) && !owner->getProperty(kIOHIDCompatibilityInterface))
         )
@@ -408,7 +409,7 @@ extern "C" kern_return_t sysdiagnose_notify_user(uint32_t keycode);
 
 void handle_stackshot_keychord(uint32_t keycode)
 {
-    kern_stack_snapshot_with_reason("Stackshot triggered using keycombo");
+    kern_stack_snapshot_with_reason((char *)"Stackshot triggered using keycombo");
     sysdiagnose_notify_user(keycode);
     HIDLog("IOHIDSystem posted stackshot event 0x%08x", keycode);
 }

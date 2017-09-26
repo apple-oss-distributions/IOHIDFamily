@@ -27,7 +27,7 @@
 
 #define ABS_TO_NS(t,b)               ((t * (b).numer)/ (b).denom)
 #define NS_TO_ABS(t,b)               ((t * (b).denom)/ (b).numer)
-#define FIXED_TO_DOUBLE(x)           ((x)/65536.0)
+#define FIXED_TO_DOUBLE(x)           (((double)x)/65536.0)
 
 #define	EV_DCLICKTIME                500000000               /* Default nanoseconds for a double-click */
 #define	EV_DCLICKSPACE               3                       /* Default pixel threshold for double-clicks */
@@ -44,6 +44,11 @@
   ((IOHIDEventGetPhase (scrollEvent) >> 1) & \
   (kScrollTypeMomentumStart | kScrollTypeMomentumEnd)))
 
+#define kIOHIDScrollPixelToWheelScale           FIXED_TO_DOUBLE(0x0000199a)
+#define kIOFixedOne                             0x10000ULL
+#define kIOHIDScrollDefaultResolution           FIXED_TO_DOUBLE (9 * kIOFixedOne)
+#define kIOHIDScrollConsumeResolution           FIXED_TO_DOUBLE (100 * kIOFixedOne)
+#define kIOHIDScrollConsumeCountMultiplier      3
 #define kIOHIDScrollCountMaxTimeDeltaBetween    600
 #define kIOHIDScrollCountMaxTimeDeltaToSustain  250
 #define kIOHIDScrollCountMinDeltaToStart        (30)
@@ -56,8 +61,21 @@
 #define INITEVENTNUM                            13
 
 
+
+
+
 #define kZoomModifierMask (NX_COMMANDMASK| NX_ALTERNATEMASK | NX_CONTROLMASK | NX_SHIFTMASK)
 #define kLegacyMouseEventsMask (NX_LMOUSEDOWNMASK|NX_RMOUSEDOWNMASK|NX_LMOUSEUPMASK|NX_RMOUSEUPMASK|NX_OMOUSEDOWNMASK|NX_OMOUSEUPMASK)
+
+
+typedef struct {
+  boolean_t       direction;
+  double          accumulator;
+  uint32_t        count;
+  uint32_t        clearThreshold;
+  uint32_t        countThreshold;
+  boolean_t       hiResolution;
+} CONSUME_RECORD;
 
 
 typedef struct {
@@ -69,6 +87,7 @@ typedef struct {
   CFTypeRef       service;
   IOHIDFloat      lastAbsoluteX;
   IOHIDFloat      lastAbsoluteY;
+  CONSUME_RECORD  scrollConsume[3];
 } SERVICE_RECORD;
 
 typedef struct {
@@ -87,7 +106,7 @@ typedef struct {
 static uint64_t __IOHIDEventTranslatorGetServiceIDForObject (CFTypeRef service);
 CFTypeRef __IOHIDEventTranslatorCopyServiceProperty (CFTypeRef service, CFStringRef key);
 
-void __IOHIDPointerEventTranslatorCreateMouseUpDownEvent (IOHIDPointerEventTranslatorRef translator, EVENT_TRANSLATOR_CONTEXT *context);
+void __IOHIDPointerEventTranslatorCreateMouseUpDownEvent (IOHIDPointerEventTranslatorRef translator, EVENT_TRANSLATOR_CONTEXT *context, IOHIDEventRef pointerEvent);
 void __IOHIDPointerEventTranslatorCreateSysdefineEvent (IOHIDPointerEventTranslatorRef translator, EVENT_TRANSLATOR_CONTEXT *context);
 
 static void __IOHIDPointerEventTranslatorFree( CFTypeRef object );
@@ -95,13 +114,12 @@ static CFStringRef __IOHIDPointerEventTranslatorCopyDebugDescription(CFTypeRef c
 IOHIDPointerEventTranslatorRef __IOHIDPointerEventTranslatorCreatePrivate(CFAllocatorRef allocator, CFAllocatorContext * context __unused);
 IOHIDEventRef __IOHIDPointerEventTranslatorCreateMouseMoveEvent (IOHIDPointerEventTranslatorRef translator, EVENT_TRANSLATOR_CONTEXT *context, IOHIDEventRef pointerEvent);
 void __IOHIDPointerEventTranslatorInitNxEvent (EVENT_TRANSLATOR_CONTEXT *context, NXEventExt *nxEvent, uint8_t type);
-uint32_t __IOHIDPointerEventTranslatorGetGlobalButtonState (IOHIDPointerEventTranslatorRef translator);
 void __IOHIDPointerEventTranslatorProcessButtonState (IOHIDPointerEventTranslatorRef translator, EVENT_TRANSLATOR_CONTEXT *context, IOHIDEventRef pointerEvent);
 void __IOHIDPointerEventTranslatorProcessClickState (IOHIDPointerEventTranslatorRef translator, EVENT_TRANSLATOR_CONTEXT *context, IOHIDEventRef pointerEvent, IOHIDEventRef buttonEvent);
 
 void __IOHIDPointerEventTranslatorProcessScrollCount (IOHIDPointerEventTranslatorRef translator, EVENT_TRANSLATOR_CONTEXT *context, IOHIDEventRef scrollEvent);
 
-IOHIDEventRef __IOHIDPointerEventTranslatorCreateScrollEvent (IOHIDPointerEventTranslatorRef translator, EVENT_TRANSLATOR_CONTEXT *context, IOHIDEventRef scrollEvent);
+IOHIDEventRef __IOHIDPointerEventTranslatorCreateScrollEvent (IOHIDPointerEventTranslatorRef translator, EVENT_TRANSLATOR_CONTEXT *context, IOHIDEventRef scrollEvent, IOHIDEventRef accellScrollEvent);
 boolean_t __IOHIDEventTranslatorGetBooleanProperty (CFTypeRef service, CFStringRef key, boolean_t defaultValue);
 uint64_t __IOHIDEventTranslatorGetIntegerProperty (CFTypeRef service, CFStringRef key, uint64_t defaultValue);
 SERVICE_RECORD * __IOHIDEventTranslatorGetServiceRecordForServiceID (IOHIDPointerEventTranslatorRef translator,  uint64_t serviceID);
@@ -109,6 +127,10 @@ static uint32_t __IOHIDPointerEventTranslatorGetUniqueEventNumber (IOHIDPointerE
 uint32_t __IOHIDPointerEventTranslatorRemapButtons (IOHIDPointerEventTranslatorRef translator, EVENT_TRANSLATOR_CONTEXT *context, uint32_t buttons);
 void __IOHIDPointerEventTranslatorProcessLegacyEvent (IOHIDPointerEventTranslatorRef translator,EVENT_TRANSLATOR_CONTEXT *context,  IOHIDEventRef legacyMouseEvent);
 NXEventExt * __IOHIDPointerEventTranslatorGetNxMouseEvents (IOHIDEventRef event);
+double __IOHIDPointerEventTranslatorGetScrollDelta (SERVICE_RECORD *record, int axisIndex, double value, double accelValue);
+uint32_t __IOHIDPointerEventTranslatorInitScrollResolution (CFTypeRef service, int axisIndex);
+void __IOHIDPointerEventTranslatorInitScrollConsumeRecords (SERVICE_RECORD * serviceRecord);
+
 
 static const CFRuntimeClass __IOHIDPointerEventTranslatorClass = {
   0,                      // version
@@ -216,6 +238,37 @@ error_exit:
   return translator;
 }
 
+
+//------------------------------------------------------------------------------
+// __IOHIDPointerEventTranslatorInitScrollResolution
+//------------------------------------------------------------------------------
+
+uint32_t __IOHIDPointerEventTranslatorInitScrollResolution (CFTypeRef service, int axisIndex) {
+  static CFStringRef scrollRes [] = {CFSTR(kIOHIDScrollResolutionYKey), CFSTR(kIOHIDScrollResolutionXKey), CFSTR(kIOHIDScrollResolutionZKey)};
+  uint32_t resolution = (uint32_t)__IOHIDEventTranslatorGetIntegerProperty (service, scrollRes[axisIndex], 0);
+  if (!resolution) {
+    resolution = (uint32_t)__IOHIDEventTranslatorGetIntegerProperty (service,  CFSTR(kIOHIDScrollResolutionKey), 0);
+  }
+  return resolution;
+}
+
+//------------------------------------------------------------------------------
+// __IOHIDPointerEventTranslatorInitScrollConsumeRecord
+//------------------------------------------------------------------------------
+void __IOHIDPointerEventTranslatorInitScrollConsumeRecords (SERVICE_RECORD * serviceRecord) {
+  
+  for (int index = 0; index < 3; index++) {
+    uint32_t resolution = __IOHIDPointerEventTranslatorInitScrollResolution (serviceRecord->service, index);
+    if (!resolution) {
+      continue;
+    }
+    serviceRecord->scrollConsume[index].hiResolution   = ((FIXED_TO_DOUBLE(resolution) * 2) > kIOHIDScrollDefaultResolution);
+    serviceRecord->scrollConsume[index].clearThreshold =  (uint32_t)floor((FIXED_TO_DOUBLE(resolution) / kIOHIDScrollConsumeResolution) * 2);
+    serviceRecord->scrollConsume[index].countThreshold = serviceRecord->scrollConsume[index].clearThreshold * kIOHIDScrollConsumeCountMultiplier;
+  }
+}
+
+
 //------------------------------------------------------------------------------
 // IOHIDPointerEventTranslatorRegisterServcie
 //------------------------------------------------------------------------------
@@ -254,8 +307,9 @@ void IOHIDPointerEventTranslatorRegisterService (IOHIDPointerEventTranslatorRef 
   
   record.buttonCount = (uint32_t)__IOHIDEventTranslatorGetIntegerProperty (service,  CFSTR(kIOHIDPointerButtonCountKey), 1);
   
-   record.clickRemappingDisable  = __IOHIDEventTranslatorGetBooleanProperty (service, CFSTR(kIOHIDDisallowRemappingOfPrimaryClickKey), false);
-    
+  record.clickRemappingDisable  = __IOHIDEventTranslatorGetBooleanProperty (service, CFSTR(kIOHIDDisallowRemappingOfPrimaryClickKey), false);
+  
+  __IOHIDPointerEventTranslatorInitScrollConsumeRecords (&record);
     
   CFMutableDataRef serviceRecord = CFDataCreateMutable(CFGetAllocator(translator), sizeof (record));
   if (serviceRecord) {
@@ -289,7 +343,6 @@ void IOHIDPointerEventTranslatorUnRegisterService (IOHIDPointerEventTranslatorRe
 // IOHIDPointerEventTranslatorSetProperty
 //------------------------------------------------------------------------------
 void IOHIDPointerEventTranslatorSetProperty (IOHIDPointerEventTranslatorRef translator, CFStringRef key, CFTypeRef property) {
-  HIDLogDebug("%@ : %@", key, property);
   if (CFEqual(key, CFSTR(kIOHIDClickTimeKey)) && property && CFGetTypeID(property) == CFNumberGetTypeID()) {
     CFNumberGetValue(property, kCFNumberSInt64Type, &translator->clickCountTimeTreshold);
   } else if (CFEqual(key, CFSTR(kIOHIDScrollZoomModifierMaskKey)) && property && CFGetTypeID(property) == CFNumberGetTypeID()) {
@@ -358,14 +411,15 @@ CFArrayRef IOHIDPointerEventTranslatorCreateEventCollection (IOHIDPointerEventTr
   }
 
   IOHIDEventRef scrollEvent = IOHIDEventGetEvent (event, kIOHIDEventTypeScroll);
-
+  IOHIDEventRef accelScrollEvent = scrollEvent;
+  
   if (scrollEvent != NULL && (IOHIDEventGetEventFlags(scrollEvent) & kIOHIDAccelerated) == 0) {
     CFIndex i, count;
     CFArrayRef children = IOHIDEventGetChildren(scrollEvent);
     for (i=0, count = (children) ? CFArrayGetCount(children) : 0; i < count; i++) {
       IOHIDEventRef child = IOHIDEventGetEvent((IOHIDEventRef)CFArrayGetValueAtIndex(children, i), kIOHIDEventTypeScroll);
       if (child && IOHIDEventGetEventFlags(child) & kIOHIDAccelerated) {
-        scrollEvent = child;
+        accelScrollEvent = child;
         break;
       }
     }
@@ -378,9 +432,9 @@ CFArrayRef IOHIDPointerEventTranslatorCreateEventCollection (IOHIDPointerEventTr
   }
  
   if (scrollEvent) {
-    __IOHIDPointerEventTranslatorProcessScrollCount (translator, &context, scrollEvent);
+    __IOHIDPointerEventTranslatorProcessScrollCount (translator, &context, accelScrollEvent);
     
-    translatedEvent = __IOHIDPointerEventTranslatorCreateScrollEvent (translator, &context, scrollEvent);
+    translatedEvent = __IOHIDPointerEventTranslatorCreateScrollEvent (translator, &context, scrollEvent, accelScrollEvent);
     if (translatedEvent) {
       CFArrayAppendValue(eventCollection, translatedEvent);
       CFRelease(translatedEvent);
@@ -389,21 +443,17 @@ CFArrayRef IOHIDPointerEventTranslatorCreateEventCollection (IOHIDPointerEventTr
   
   if (pointerEvent) {
     __IOHIDPointerEventTranslatorProcessButtonState (translator, &context, pointerEvent);
-    
     if (context.globalButtons != translator->globalButtons) {
-
-        __IOHIDPointerEventTranslatorCreateSysdefineEvent (translator, &context);
-
-        __IOHIDPointerEventTranslatorCreateMouseUpDownEvent (translator, &context);
-    
+      __IOHIDPointerEventTranslatorCreateSysdefineEvent (translator, &context);
+      __IOHIDPointerEventTranslatorCreateMouseUpDownEvent (translator, &context, pointerEvent);
     }
-  }
-  if (pointerEvent) {
+    
     translatedEvent = __IOHIDPointerEventTranslatorCreateMouseMoveEvent (translator, &context, pointerEvent);
     if (translatedEvent) {
       CFArrayAppendValue(eventCollection, translatedEvent);
       CFRelease(translatedEvent);
     }
+  
     if (IOHIDEventIsAbsolute(pointerEvent)) {
       context.serviceRecord->lastAbsoluteX = IOHIDEventGetFloatValue (pointerEvent, kIOHIDEventFieldPointerX);
       context.serviceRecord->lastAbsoluteY = IOHIDEventGetFloatValue (pointerEvent, kIOHIDEventFieldPointerY);
@@ -493,7 +543,7 @@ void __IOHIDPointerEventTranslatorProcessButtonState (IOHIDPointerEventTranslato
 
   if (context->serviceRecord->buttons != buttons) {
     context->serviceRecord->buttons = buttons;
-    translator->globalButtons =  __IOHIDPointerEventTranslatorGetGlobalButtonState (translator);
+    translator->globalButtons =  IOHIDPointerEventTranslatorGetGlobalButtonState (translator);
   }
 }
 
@@ -599,7 +649,7 @@ void __IOHIDPointerEventTranslatorCreateSysdefineEvent (IOHIDPointerEventTransla
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 // __IOHIDPointerEventTranslatorCreateMouseUpDownEvent
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-void __IOHIDPointerEventTranslatorCreateMouseUpDownEvent (IOHIDPointerEventTranslatorRef translator, EVENT_TRANSLATOR_CONTEXT *context) {
+void __IOHIDPointerEventTranslatorCreateMouseUpDownEvent (IOHIDPointerEventTranslatorRef translator, EVENT_TRANSLATOR_CONTEXT *context, IOHIDEventRef pointerEvent) {
 
   uint32_t      changedButtons;
   uint32_t      buttons;
@@ -620,7 +670,13 @@ void __IOHIDPointerEventTranslatorCreateMouseUpDownEvent (IOHIDPointerEventTrans
   if (context->serviceRecord->isMultiTouchService) {
     nxEvent.payload.data.mouse.subType = NX_SUBTYPE_MOUSE_TOUCH;
   }
-  
+
+  if (IOHIDEventIsAbsolute(pointerEvent)) {
+    *((float*)&nxEvent.payload.location.x) = (float)IOHIDEventGetFloatValue (pointerEvent, kIOHIDEventFieldPointerX);
+    *((float*)&nxEvent.payload.location.y) = (float)IOHIDEventGetFloatValue (pointerEvent, kIOHIDEventFieldPointerY);
+    nxEvent.extension.flags = NX_EVENT_EXTENSION_LOCATION_TYPE_FLOAT | NX_EVENT_EXTENSION_LOCATION_DEVICE_SCALED;
+  }
+
   if (changedButtons & 1) {
     if (buttons & 1) {
       nxEvent.payload.type = NX_LMOUSEDOWN;
@@ -659,9 +715,43 @@ void __IOHIDPointerEventTranslatorCreateMouseUpDownEvent (IOHIDPointerEventTrans
 }
 
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+// __IOHIDPointerEventTranslatorProcessScrollDelta
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+double __IOHIDPointerEventTranslatorGetScrollDelta (SERVICE_RECORD *record, int axisIndex, double value, double accelValue) {
+  double result = accelValue;
+  if (record->scrollConsume[axisIndex].countThreshold) {
+    boolean_t direction = (value >= 0);
+    
+    if (record->scrollConsume[axisIndex].direction != direction) {
+      record->scrollConsume[axisIndex].accumulator = 0.0;
+      record->scrollConsume[axisIndex].count = 0;
+    }
+    
+    record->scrollConsume[axisIndex].direction = direction;
+    record->scrollConsume[axisIndex].accumulator += accelValue;
+    record->scrollConsume[axisIndex].count += fabs (value);
+    
+    if (value &&
+       (fabs (value) > (record->scrollConsume[axisIndex].clearThreshold) ||
+        record->scrollConsume[axisIndex].count >= record->scrollConsume[axisIndex].countThreshold)) {
+      
+     double accum = record->scrollConsume[axisIndex].accumulator;
+      result =  copysign (fabs(floor(accum * 10) / 10), accum);
+      record->scrollConsume[axisIndex].count = 0;
+      record->scrollConsume[axisIndex].accumulator = 0.0;
+    } else {
+      result = 0.0;
+    }
+  }
+  result = (result && fabs(result) < 0.1) ? copysign(0.1, result) : result;
+  return result;
+}
+
+
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 // __IOHIDPointerEventTranslatorCreateScrollEvent
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-IOHIDEventRef __IOHIDPointerEventTranslatorCreateScrollEvent (IOHIDPointerEventTranslatorRef translator, EVENT_TRANSLATOR_CONTEXT *context, IOHIDEventRef scrollEvent) {
+IOHIDEventRef __IOHIDPointerEventTranslatorCreateScrollEvent (IOHIDPointerEventTranslatorRef translator, EVENT_TRANSLATOR_CONTEXT *context, IOHIDEventRef scrollEvent, IOHIDEventRef accellScrollEvent) {
   NXEventExt  nxEvent;
   SInt32      eventType = NX_SCROLLWHEELMOVED;
   
@@ -680,22 +770,33 @@ IOHIDEventRef __IOHIDPointerEventTranslatorCreateScrollEvent (IOHIDPointerEventT
 
   __IOHIDPointerEventTranslatorInitNxEvent (context, &nxEvent, eventType);
   
-  double dx = IOHIDEventGetFloatValue (scrollEvent, kIOHIDEventFieldScrollX);
-  double dy = IOHIDEventGetFloatValue (scrollEvent, kIOHIDEventFieldScrollY);
-  double dz = IOHIDEventGetFloatValue (scrollEvent, kIOHIDEventFieldScrollZ);
+  double scrollAccell [3];
+  double scrollNonAccell [3];
+  double consumeScroll  [3];
   
+  static int fields[] = {kIOHIDEventFieldScrollY, kIOHIDEventFieldScrollX, kIOHIDEventFieldScrollZ};
+  for (int index = 0; index < 3; index++) {
+    scrollAccell[index]    = IOHIDEventGetFloatValue (accellScrollEvent, fields[index]);
+    scrollNonAccell[index] = IOHIDEventGetFloatValue (scrollEvent, fields[index]);
+    consumeScroll [index]  = __IOHIDPointerEventTranslatorGetScrollDelta (context->serviceRecord, index, scrollNonAccell[index], scrollAccell[index]);
+  }
   
-  nxEvent.payload.data.scrollWheel.deltaAxis1 = (SInt16)round(dy);
-  nxEvent.payload.data.scrollWheel.deltaAxis2 = (SInt16)round(dx);
-  nxEvent.payload.data.scrollWheel.deltaAxis3 = (SInt16)round(dz);
+  if (consumeScroll[0]) {
+    nxEvent.payload.data.scrollWheel.deltaAxis1 = (SInt16) (fabs(consumeScroll[0]) < 1 ? copysign (1, consumeScroll[0]) : copysign(fabs(consumeScroll[0]), consumeScroll[0]));
+    nxEvent.payload.data.scrollWheel.fixedDeltaAxis1 = (SInt32)copysign(ceil(fabs(consumeScroll[0] * 65536)), consumeScroll[0]);
+  }
+  if (consumeScroll[1]) {
+    nxEvent.payload.data.scrollWheel.deltaAxis2 = (SInt16) (fabs(consumeScroll[1]) < 1 ? copysign (1, consumeScroll[1]) : copysign(fabs(consumeScroll[1]), consumeScroll[1]));
+    nxEvent.payload.data.scrollWheel.fixedDeltaAxis2 = (SInt32)copysign(ceil(fabs(consumeScroll[1] * 65536)), consumeScroll[1]);
+  }
+  if (consumeScroll[2]) {
+    nxEvent.payload.data.scrollWheel.deltaAxis3 = (SInt16) (fabs(consumeScroll[2]) < 1 ? copysign (1, consumeScroll[2]) : copysign(fabs(consumeScroll[2]), consumeScroll[2]));
+    nxEvent.payload.data.scrollWheel.fixedDeltaAxis3 = (SInt32)copysign(ceil(fabs(consumeScroll[2] * 65536)), consumeScroll[2]);
+  }
 
-  nxEvent.payload.data.scrollWheel.fixedDeltaAxis1 = (SInt32)(dy * 65536);
-  nxEvent.payload.data.scrollWheel.fixedDeltaAxis2 = (SInt32)(dx * 65536);
-  nxEvent.payload.data.scrollWheel.fixedDeltaAxis3 = (SInt32)(dz * 65536);
-
-  nxEvent.payload.data.scrollWheel.pointDeltaAxis1 =  dy < 0 ? floor(dy*10) : ceil(dy*10);
-  nxEvent.payload.data.scrollWheel.pointDeltaAxis2 =  dx < 0 ? floor(dx*10) : ceil(dx*10);
-  nxEvent.payload.data.scrollWheel.pointDeltaAxis3 =  dz < 0 ? floor(dz*10) : ceil(dz*10);
+  nxEvent.payload.data.scrollWheel.pointDeltaAxis1 =  copysign(ceil(fabs(scrollAccell[0]) * 10), scrollAccell[0]);
+  nxEvent.payload.data.scrollWheel.pointDeltaAxis2 =  copysign(ceil(fabs(scrollAccell[1]) * 10), scrollAccell[1]);
+  nxEvent.payload.data.scrollWheel.pointDeltaAxis3 =  copysign(ceil(fabs(scrollAccell[2]) * 10), scrollAccell[2]);
   
   nxEvent.payload.data.scrollWheel.reserved1 = TRANSLATE_SCROLL_MOMENTUM(scrollEvent);
   
@@ -825,7 +926,7 @@ void __IOHIDPointerEventTranslatorProcessScrollCount (IOHIDPointerEventTranslato
       break;
     }
     default:
-      HIDLogDebug ("*SCROLLCOUNT: Unknown phase 0x%x", phaseAndMomentum);
+      HIDLogError ("SCROLLCOUNT: Unknown phase 0x%x", phaseAndMomentum);
   }
   if (checkSustain) {
     if (scrollMagnitudeSquared > translator->scrollCountMinDeltaToSustainPow2) {
@@ -893,16 +994,16 @@ static void __ButtonsApplierFunction(const void *key __unused, const void *value
 }
 
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-// __IOHIDPointerEventTranslatorGetGlobalButtonState
+// IOHIDPointerEventTranslatorGetGlobalButtonState
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-uint32_t __IOHIDPointerEventTranslatorGetGlobalButtonState (IOHIDPointerEventTranslatorRef translator) {
+uint32_t IOHIDPointerEventTranslatorGetGlobalButtonState (IOHIDPointerEventTranslatorRef translator) {
   uint32_t globalButtons = 0;
   CFDictionaryApplyFunction (translator->serviceRecord, __ButtonsApplierFunction, &globalButtons);
   return globalButtons;
 }
 
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-// __IOHIDPointerEventTranslatorGetGlobalButtonState
+// __IOHIDPointerEventTranslatorGetUniqueEventNumber
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 uint32_t __IOHIDPointerEventTranslatorGetUniqueEventNumber (IOHIDPointerEventTranslatorRef translator) {
   while (++translator->eventNumber == 0);
@@ -920,7 +1021,7 @@ static uint64_t __IOHIDEventTranslatorGetServiceIDForObject (CFTypeRef service) 
   } else if (CFGetTypeID(service) == IOHIDServiceClientGetTypeID ()) {
     registryId = IOHIDServiceClientGetRegistryID((IOHIDServiceClientRef) service);
   } else {
-    HIDLogDebug ("Unknown service object type");
+    HIDLogError ("Unknown service object type");
   }
   if (registryId) {
     CFNumberGetValue(registryId, kCFNumberSInt64Type, &result);
@@ -938,7 +1039,7 @@ CFTypeRef __IOHIDEventTranslatorCopyServiceProperty (CFTypeRef service, CFString
   } else if (CFGetTypeID(service) == IOHIDServiceClientGetTypeID ()) {
     result = IOHIDServiceClientCopyProperty((IOHIDServiceClientRef) service, key);
   } else {
-    HIDLogDebug ("Unknown service object type");
+    HIDLogError ("Unknown service object type");
   }
   return result;
 }
@@ -1008,7 +1109,7 @@ NXEventExt * __IOHIDPointerEventTranslatorGetNxMouseEvents (IOHIDEventRef event)
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 // __IOHIDPointerEventTranslatorProcessLegacyEvent
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-void __IOHIDPointerEventTranslatorProcessLegacyEvent (IOHIDPointerEventTranslatorRef translator,EVENT_TRANSLATOR_CONTEXT *context,  IOHIDEventRef legacyMouseEvent) {
+void __IOHIDPointerEventTranslatorProcessLegacyEvent (IOHIDPointerEventTranslatorRef translator,EVENT_TRANSLATOR_CONTEXT *context __unused,  IOHIDEventRef legacyMouseEvent) {
 
     if (legacyMouseEvent) {
         NXEventExt * nxEvent  = __IOHIDPointerEventTranslatorGetNxMouseEvents (legacyMouseEvent);

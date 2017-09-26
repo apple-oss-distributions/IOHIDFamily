@@ -37,6 +37,8 @@
 #include "IOHIDSystem.h"
 #include "IOHIDEventServiceQueue.h"
 
+#define MAX_SCREENS 32  // same as EV_MAX_SCREENS in HIDSystem
+
 class IOHIDUserClient : public IOUserClient
 {
     OSDeclareDefaultStructors(IOHIDUserClient)
@@ -44,6 +46,7 @@ class IOHIDUserClient : public IOUserClient
 private:
 
     IOHIDSystem     *owner;
+    int             _screenTokens[MAX_SCREENS];
 
 public:
     // IOUserClient methods
@@ -110,9 +113,9 @@ private:
     OSSet *                     userQueues;
     IOCommandGate *             commandGate;
 	static void initialize(void);
-	static UInt32 createIDForDataQueue(IODataQueue * eventQueue);
-	static void removeIDForDataQueue(IODataQueue * eventQueue);
-	static IODataQueue * copyDataQueueWithID(UInt32 queueID);
+	static UInt32 createIDForDataQueue(IOSharedDataQueue * eventQueue);
+	static void removeIDForDataQueue(IOSharedDataQueue * eventQueue);
+	static IOSharedDataQueue * copyDataQueueWithID(UInt32 queueID);
 
 public:
     virtual bool initWithTask(task_t owningTask, void * security_id, UInt32 type );
@@ -130,6 +133,7 @@ public:
 
     virtual IOReturn registerNotificationPort(mach_port_t port, UInt32 type, UInt32 refCon );
     virtual IOReturn clientMemoryForType( UInt32 type, UInt32 * flags, IOMemoryDescriptor ** memory );
+    IOReturn clientMemoryForTypeGated( UInt32 type, UInt32 * flags, IOMemoryDescriptor ** memory );
 
     virtual IOService * getService( void );
 

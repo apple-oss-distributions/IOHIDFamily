@@ -77,6 +77,7 @@ private:
         struct {
             OSArray *           elements;
             UInt8               bootMouseData[4];
+            bool                appleVendorSupported;
         } keyboard;
         
         struct {
@@ -85,6 +86,8 @@ private:
             IOHIDElement *      touchCancelElement;
             bool                native;
             bool                collectionDispatch;
+            IOFixed             centroidX;
+            IOFixed             centroidY;
         } digitizer;
         
         struct {
@@ -140,6 +143,16 @@ private:
             } shoulder;
 
         } gameController;
+      
+        struct {
+            OSArray *           elements;
+            OSArray *           pendingEvents;
+        } vendorMessage;
+        
+        struct {
+            OSArray *           elements;
+        } biometric;
+
         UInt64  lastReportTime;
     };
     ExpansionData *             _reserved;
@@ -156,7 +169,9 @@ private:
     bool                    parseUnicodeElement(IOHIDElement * element);
     bool                    parseLegacyUnicodeElement(IOHIDElement * element);
     bool                    parseGestureUnicodeElement(IOHIDElement * element);
-    
+    bool                    parseVendorMessageElement(IOHIDElement * element);
+    bool                    parseBiometricElement(IOHIDElement * element);
+  
     void                    processDigitizerElements();
     void                    processMultiAxisElements();
     void                    processGameControllerElements();
@@ -171,6 +186,8 @@ private:
     void                    setKeyboardProperties();
     void                    setUnicodeProperties();
     void                    setAccelerationProperties();
+    void                    setVendorMessageProperties();
+    void                    setBiometricProperties();
 
     UInt32                  checkGameControllerElement(IOHIDElement * element);
     UInt32                  checkMultiAxisElement(IOHIDElement * element);
@@ -191,7 +208,10 @@ private:
     void                    handleUnicodeLegacyReport(AbsoluteTime timeStamp, UInt32 reportID);
     void                    handleUnicodeGestureReport(AbsoluteTime timeStamp, UInt32 reportID);
     IOHIDEvent *            handleUnicodeGestureCandidateReport(EventElementCollection * candidate, AbsoluteTime timeStamp, UInt32 reportID);
-    
+
+    void                    handleVendorMessageReport(AbsoluteTime timeStamp, IOMemoryDescriptor * report, UInt32 reportID, int phase);
+    void                    handleBiometricReport(AbsoluteTime timeStamp, UInt32 reportID);
+  
     bool                    serializeCharacterGestureState(void * ref, OSSerialize * serializer);
     bool                    conformTo (UInt32 usagePage, UInt32 usage);
     IOHIDEvent*             createDigitizerTransducerEventForReport(DigitizerTransducer * transducer, AbsoluteTime timeStamp, UInt32 reportID);
@@ -242,6 +262,8 @@ protected:
                                 UInt32                      usagePage,
                                 UInt32                      usage );
 
+    virtual void            dispatchEvent(IOHIDEvent * event, IOOptionBits options=0);
+
 public:
 
 
@@ -253,7 +275,8 @@ public:
                                 bool *                      defer );
 
     virtual IOReturn        setProperties( OSObject * properties );
-    
+  
+  
     OSMetaClassDeclareReservedUnused(IOHIDEventDriver,  0);
     OSMetaClassDeclareReservedUnused(IOHIDEventDriver,  1);
     OSMetaClassDeclareReservedUnused(IOHIDEventDriver,  2);

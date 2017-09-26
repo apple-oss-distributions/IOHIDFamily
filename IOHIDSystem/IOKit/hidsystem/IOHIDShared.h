@@ -261,6 +261,36 @@ extern MasterAudioFunctions *masterAudioFunctions;
 #endif
 #endif /* !KERNEL */
 
+
+
+enum {
+    /*!
+     @defined kIOHIDOpenedByEventSystem
+     @abstract option passed to open for IOHIDInterface  if opened by IOHIDEventDriver
+     */
+    kIOHIDOpenedByEventSystem       = 0x10000,
+    /*!
+     @defined kIOHIDOpenedByFastPathClient
+     @abstract option passed to open for IOHIDEventService if opened by fast path client
+     */
+    kIOHIDOpenedByFastPathClient    = 0x20000
+};
+
+/*!
+ @defined kIOHIDMessageOpenedByEventSystem
+ @abstract message to IOHIDInterface and /or IOHIDDevice if instance of corresponding  IOHIDEventService opened by event system and ready to receive events
+ */
+
+#define kIOHIDMessageOpenedByEventSystem  iokit_vendor_specific_msg(1)
+
+/*!
+ @defined kIOHIDMessageRelayServiceInterfaceActive
+ @abstract message from IOHIDDevice to indicate that the IOHIDRelayService's USB interface is active.
+ */
+
+#define kIOHIDMessageRelayServiceInterfaceActive     iokit_vendor_specific_msg(2)
+
+
 __END_DECLS
 
 

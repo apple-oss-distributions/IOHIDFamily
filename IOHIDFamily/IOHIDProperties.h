@@ -88,7 +88,7 @@
  *
  * @abstract    CFArray of dictionaries that contain user defined key mappings.
  */
-#define kIOHIDUserUsageMapKey                       "UserKeyMapping"
+#define kIOHIDUserKeyUsageMapKey                     "UserKeyMapping"
 
 /*!
  * @define      kIOHIDKeyboardCapsLockDelayOverride
@@ -120,5 +120,12 @@
  *              If value is 0, there are no repeats (including initial).
  */
 #define kIOHIDServiceKeyRepeatDelayKey              "HIDKeyRepeat"
+
+/*!
+ * @define      kIOHIDIdleTimeMicrosecondsKey
+ *
+ * @abstract    CFNumber containing the HID idle time in microseconds.
+ */
+#define kIOHIDIdleTimeMicrosecondsKey               "HIDIdleTimeMicroseconds"
 
 #endif /* IOHIDProperties_h */

@@ -6,9 +6,9 @@
 //
 //
 
-#import <Foundation/Foundation.h>
+#import  <Foundation/Foundation.h>
 #include <IOKit/hid/IOHIDEventSystemKeys.h>
-#include "AssertMacros.h"
+#include "hdutil.h"
 #include <getopt.h>
 #include "utility.h"
 
@@ -19,7 +19,7 @@ int propertyGetEventSystemProperty (IOHIDEventSystemClientRef client, NSString* 
 int propertyGetServicesProperty (IOHIDEventSystemClientRef client, NSString* key);
 void propertyPrint (NSString *str);
 
-#define PROPERTY_USAGE_LIST \ 
+#define PROPERTY_USAGE_LIST \
 "                                  ProductID        - numeric value (decimal or hex)\n" \
 "                                  VendorID         - numeric value (decimal or hex)\n" \
 "                                  LocationID       - numeric value (decimal or hex)\n" \
@@ -65,7 +65,7 @@ static const struct option propertyOptionLong[] =
 };
 
 const char propertyUsage[] =
-"\Read/Write HID Event System property\n"
+"\nRead/Write HID Event System property\n"
 "\nUsage:\n\n"
 "  hidutil property [--filter <value> ] <--get <key> |--write <dictionary>>\n"
 "\nExamples:\n\n"
@@ -123,7 +123,10 @@ int list (int argc __unused, const char * argv[] __unused) {
     }
     
     client = IOHIDEventSystemClientCreateWithType(kCFAllocatorDefault, kIOHIDEventSystemClientTypeMonitor, NULL);
-    require_action (client, exit, status = STATUS_ERROR;);
+    if (!client) {
+        status = STATUS_ERROR;
+        goto exit;
+    }
     
     if (filterDictionary) {
         IOHIDEventSystemClientSetMatching (client, (__bridge CFDictionaryRef)(filterDictionary));
@@ -148,7 +151,11 @@ exit:
 
 
 void propertyPrint (NSString *str) {
-     [str writeToFile: @"/dev/stdout" atomically: NO];
+//    [str writeToFile: @"/dev/stdout" atomically: NO];
+    const char * c_str = [str UTF8String];
+    if (c_str) {
+        printf ("%s" , [str UTF8String]);
+    }
 }
 
 int propertySetOnEventSystem (IOHIDEventSystemClientRef client, NSDictionary * propertiesDicitonary) {
@@ -166,8 +173,9 @@ int propertySetOnServices (IOHIDEventSystemClientRef client, NSDictionary * prop
     if (services) {
         printf ("%-8s  %-20s  %s\n", "RegistryID", "Key", "Value");
         for (id service in services) {
+            NSDictionary *serviceInfo = createServiceInfoDictionary((__bridge IOHIDServiceClientRef)service);
             [propertiesDicitonary enumerateKeysAndObjectsUsingBlock:^(id key, id value, BOOL* stop __unused) {
-                propertyPrint ([NSString stringWithFormat:@"%@:%@\n", key, value]);
+                propertyPrint ([NSString stringWithFormat:@"%-8lx   %-20@   %@\n", ((NSNumber *)serviceInfo[@"RegistryID"]).unsignedLongValue, key, value]);
                 IOHIDServiceClientSetProperty ((__bridge IOHIDServiceClientRef)service,  (__bridge CFStringRef) key, (__bridge CFStringRef) value);
             }];
         }
@@ -195,7 +203,7 @@ int propertyGetServicesProperty (IOHIDEventSystemClientRef client, NSString* key
     return STATUS_SUCCESS;
 }
 
-int property (int argc __unused, const char * argv[] __unused) {
+int property (int argc, const char * argv[]) {
     int                         arg;
     int                         status = STATUS_SUCCESS;
     IOHIDEventSystemClientRef   client = NULL;
@@ -228,10 +236,17 @@ int property (int argc __unused, const char * argv[] __unused) {
         }
     }
     
-    require_action (!(propertyKey == NULL && propertyDicitonary == NULL) || (propertyKey != NULL && propertyDicitonary != NULL), exit, status = STATUS_ERROR;);
+    if ((!propertyKey && !propertyDicitonary) ||
+        (propertyKey && propertyDicitonary)) {
+        status = STATUS_ERROR;
+        goto exit;
+    }
 
     client = IOHIDEventSystemClientCreateWithType(kCFAllocatorDefault, kIOHIDEventSystemClientTypeMonitor, NULL);
-    require_action (client, exit, status = STATUS_ERROR;);
+    if (!client) {
+        status = STATUS_ERROR;
+        goto exit;
+    }
 
     if (filterDictionary) {
         IOHIDEventSystemClientSetMatching (client, (__bridge CFDictionaryRef)(filterDictionary));

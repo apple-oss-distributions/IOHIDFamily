@@ -22,6 +22,7 @@
 #include <IOKit/hid/IOHIDUsageTables.h>
 #include <IOKit/hid/IOHIDKeys.h>
 #include <IOKit/hidsystem/event_status_driver.h>
+#include <IOKit/hidsystem/IOHIDShared.h>
 #include <IOKit/hid/IOHIDServiceKeys.h>
 #include "IOHIDFamilyPrivate.h"
 #include <IOKit/IOKitLib.h>
@@ -41,7 +42,7 @@
 #include "IOHIDevicePrivateKeys.h"
 
 #define kCapsLockDelayMS    75
-#define kEjectKeyDelayMS    75
+#define kEjectKeyDelayMS    0
 #define kSlowKeyMinMS       1
 #define kSlowRepeatDelayMS  420
 
@@ -78,11 +79,6 @@
 
 // 5512668E-FF47-4E70-B33E-E1FFFAEF01A8
 #define kIOHIDKeyboardFilterFactory CFUUIDGetConstantUUIDWithBytes(kCFAllocatorSystemDefault, 0x55, 0x12, 0x66, 0x8E, 0xFF, 0x47, 0x4E, 0x70, 0xB3, 0x3E, 0xE1, 0xFF, 0xFA, 0xEF, 0x01, 0xA8)
-#ifdef DEBUG
-    #define DEBUG_CODE(x) x
-#else
-    #define DEBUG_CODE(x)
-#endif
 
 #define IOHIDEventIsSlowKeyPhaseEvent(e) \
     (IOHIDEventGetIntegerValue (e, kIOHIDEventFieldKeyboardSlowKeyPhase) == kIOHIDKeyboardSlowKeyPhaseStart || \
@@ -99,6 +95,15 @@ bool    isModifier(UInt32 usagePage, UInt32 usage);
 bool    isShiftKey(UInt32 usagePage, UInt32 usage);
 bool    isNotRepeated(UInt32 usagePage, UInt32 usage);
 bool    isStickyModifier(UInt32 usagePage, UInt32 usage);
+#if !TARGET_OS_EMBEDDED
+static  NXEventHandle openHIDSystem(void);
+#endif
+
+
+const CFStringRef kIOHIDEventAttachment_Modified  = CFSTR("Modified");
+const CFStringRef kIOHIDEventAttachment_Delayed   = CFSTR("Delayed");
+
+#define SERVICE_ID (_service ? IOHIDServiceGetRegistryID(_service) : NULL)
 
 //------------------------------------------------------------------------------
 // IOHIDKeyboardFilterFactory
@@ -146,6 +151,7 @@ IOHIDKeyboardFilter::IOHIDKeyboardFilter(CFUUIDRef factoryID)
 _serviceInterface(&sIOHIDKeyboardFilterFtbl),
 _factoryID( static_cast<CFUUIDRef>( CFRetain(factoryID) ) ),
 _refCount(1),
+_matchScore(0),
 _service(NULL),
 _eventCallback(defaultEventCallback),
 _eventTarget(0),
@@ -159,8 +165,8 @@ _stickyKeyToggle(false),
 _stickyKeyOn (false),
 _stickyKeyDisable(false),
 _keyRepeatEvent(NULL),
-_keyRepeatInitialDelayMS(kMinKeyRepeatMS),
-_keyRepeatDelayMS (kMinKeyRepeatMS),
+_keyRepeatInitialDelayMS(kInitialKeyRepeatMS),
+_keyRepeatDelayMS (kKeyRepeatMS),
 _delayedCapsLockEvent(0),
 _capsLockDelayMS(kCapsLockDelayMS),
 _capsLockDelayOverrideMS(-1),
@@ -174,9 +180,9 @@ _ejectKeyDelayTimer(0),
 _mouseKeyActivationResetTimer(0),
 #endif
 _capsLockState (false),
+_capsLockLEDState(false),
 _capsLockLEDInhibit (false),
 _capsLockLED(kIOHIDServiceCapsLockLEDKey_Auto),
-_capsLockLEDState(false),
 _queue(NULL),
 _stickyKeysShiftResetTimer(0),
 _slowKeysTimer(0),
@@ -262,6 +268,7 @@ ULONG IOHIDKeyboardFilter::Release()
         delete this;
         return 0;
     }
+    
     return _refCount;
 }
 
@@ -367,7 +374,7 @@ void IOHIDKeyboardFilter::open(IOHIDServiceRef service, IOOptionBits options)
 
         value = CFDictionaryGetValue(propDict, CFSTR(kIOHIDServiceModifierMappingPairsKey));
         if (value && CFGetTypeID(value) == CFArrayGetTypeID()) {
-            _modifiersKeyMap = createMapFromModifiersMap((CFArrayRef) value);
+            _modifiersKeyMap = createMapFromArrayOfPairs((CFArrayRef) value);
         }
       
         value = CFDictionaryGetValue(propDict, CFSTR(kIOHIDServiceSlowKeysDelayKey));
@@ -377,22 +384,25 @@ void IOHIDKeyboardFilter::open(IOHIDServiceRef service, IOOptionBits options)
                 _slowKeysDelayMS = kSlowKeyMinMS;
             }
         }
-        
+
+
         value = CFDictionaryGetValue(propDict, CFSTR(kIOHIDServiceInitialKeyRepeatDelayKey));
         if (value) {
             uint64_t valueProp = 0;
             CFNumberGetValue((CFNumberRef)value, kCFNumberSInt64Type, &valueProp);
-            _keyRepeatInitialDelayMS = valueProp / 1000000;
+            _keyRepeatInitialDelayMS = (UInt32)valueProp / 1000000;
+#if (kMinKeyRepeatMS > 0)
             if (_keyRepeatInitialDelayMS && _keyRepeatInitialDelayMS < kMinKeyRepeatMS) {
                 _keyRepeatInitialDelayMS = kMinKeyRepeatMS;
             }
+#endif
         }
 
         value = CFDictionaryGetValue(propDict, CFSTR(kIOHIDServiceKeyRepeatDelayKey));
         if (value) {
             uint64_t valueProp = 0;
             CFNumberGetValue((CFNumberRef)value, kCFNumberSInt64Type, &valueProp);
-            _keyRepeatDelayMS = valueProp / 1000000;
+            _keyRepeatDelayMS = (UInt32)valueProp / 1000000;
             // Bound key repeat interval.
             if (_keyRepeatDelayMS && _keyRepeatDelayMS < kMinKeyRepeatMS) {
                 _keyRepeatDelayMS = kMinKeyRepeatMS;
@@ -593,8 +603,6 @@ void IOHIDKeyboardFilter::setEventCallback(void * self, IOHIDServiceEventCallbac
 
 void IOHIDKeyboardFilter::setEventCallback(IOHIDServiceEventCallback callback, void * target, void * refcon)
 {
-    HIDLogDebug("callback = %p target = %p refcon = %p", callback, target, refcon);
-
     _eventCallback  = callback ? callback : defaultEventCallback;
     _eventTarget    = target;
     _eventContext   = refcon;
@@ -622,6 +630,8 @@ CFTypeRef IOHIDKeyboardFilter::copyPropertyForClient(CFStringRef key, CFTypeRef 
         }
     } else if (CFEqual(key, kIOHIDServiceCapsLockLEDKey)) {
         result = _capsLockLEDState ? kIOHIDServiceCapsLockLEDKey_On : kIOHIDServiceCapsLockLEDKey_Off;
+    } else if (CFEqual(key, CFSTR(kIOHIDStickyKeysOnKey))) {
+        result = CFNumberRefWrap((SInt32)_stickyKeyOn);
     }
     return result;
 }
@@ -635,7 +645,7 @@ void IOHIDKeyboardFilter::setPropertyForClient(void * self,CFStringRef key,CFTyp
 }
 
 
-void IOHIDKeyboardFilter::setPropertyForClient(CFStringRef key,CFTypeRef property, CFTypeRef client __unused)
+void IOHIDKeyboardFilter::setPropertyForClient(CFStringRef key,CFTypeRef property, CFTypeRef client)
 {
     boolean_t   stickyKeyOn = _stickyKeyOn;
     boolean_t   stickyKeyDisable = _stickyKeyDisable;
@@ -648,7 +658,9 @@ void IOHIDKeyboardFilter::setPropertyForClient(CFStringRef key,CFTypeRef propert
     if (!key) {
         goto exit;
     }
-    
+  
+    HIDLogDebug("IOHIDKeyboardFilter::setPropertyForClient: %@  %@  %@", key, property, client);
+  
     if (CFStringCompare(key, CFSTR(kIOHIDServiceStickyKeysDisabledKey), kNilOptions) == kCFCompareEqualTo) {
         stickyKeyDisable = (property && CFBooleanGetValue((CFBooleanRef)property)) ? true : false;
         HIDLogDebug("_stickyKeyDisable: %d", _stickyKeyDisable);
@@ -662,7 +674,7 @@ void IOHIDKeyboardFilter::setPropertyForClient(CFStringRef key,CFTypeRef propert
         _stickyKeyToggle = (property && CFBooleanGetValue((CFBooleanRef)property)) ? true : false;
         _stickyKeysShiftKeyCount = 0;
         
-        HIDLogDebug("_stickyKeyToggle: %d", _stickyKeyToggle);
+        HIDLogDebug("[%@] _stickyKeyToggle: %d", SERVICE_ID,  _stickyKeyToggle);
     
     } else if (CFStringCompare(key, CFSTR(kIOHIDServiceInitialKeyRepeatDelayKey), kNilOptions) == kCFCompareEqualTo) {
         
@@ -671,12 +683,12 @@ void IOHIDKeyboardFilter::setPropertyForClient(CFStringRef key,CFTypeRef propert
         if (numProp) {
             uint64_t valueProp = 0;
             CFNumberGetValue(numProp, kCFNumberSInt64Type, &valueProp);
-            _keyRepeatInitialDelayMS = valueProp / 1000000;
+            _keyRepeatInitialDelayMS = (UInt32)valueProp / 1000000;
             // Bound key repeat interval. 0 disables key repeats.
             if (_keyRepeatInitialDelayMS && _keyRepeatInitialDelayMS < kMinKeyRepeatMS) {
                 _keyRepeatInitialDelayMS = kMinKeyRepeatMS;
             }
-            HIDLogDebug("_keyRepeatInitialDelayMS: %d", (int)_keyRepeatInitialDelayMS);
+            HIDLogDebug("[%@] _keyRepeatInitialDelayMS: %d", SERVICE_ID, (int)_keyRepeatInitialDelayMS);
         }
     } else if (CFStringCompare(key, CFSTR(kIOHIDServiceKeyRepeatDelayKey), kNilOptions) == kCFCompareEqualTo) {
         
@@ -685,12 +697,12 @@ void IOHIDKeyboardFilter::setPropertyForClient(CFStringRef key,CFTypeRef propert
         if (numProp) {
             uint64_t valueProp = 0;
             CFNumberGetValue(numProp, kCFNumberSInt64Type, &valueProp);
-            _keyRepeatDelayMS = valueProp / 1000000;
+            _keyRepeatDelayMS = (UInt32)valueProp / 1000000;
             // Bound key repeat interval.
             if (_keyRepeatDelayMS && _keyRepeatDelayMS < kMinKeyRepeatMS) {
                 _keyRepeatDelayMS = kMinKeyRepeatMS;
             }
-            HIDLogDebug("_keyRepeatDelayMS: %d", (int)_keyRepeatDelayMS);
+            HIDLogDebug("[%@] _keyRepeatDelayMS: %d", SERVICE_ID, (int)_keyRepeatDelayMS);
         }
     } else if (CFStringCompare(key, CFSTR(kIOHIDServiceCapsLockStateKey), kNilOptions) == kCFCompareEqualTo) {
         
@@ -698,7 +710,7 @@ void IOHIDKeyboardFilter::setPropertyForClient(CFStringRef key,CFTypeRef propert
         
         setCapsLockState(capsLockState);
         
-        HIDLogDebug("capsLockState: %d", capsLockState);
+        HIDLogDebug("[%@] capsLockState: %d", SERVICE_ID, capsLockState);
     }
     
     else if (CFEqual(key, kIOHIDServiceCapsLockLEDKey)) {
@@ -714,7 +726,7 @@ void IOHIDKeyboardFilter::setPropertyForClient(CFStringRef key,CFTypeRef propert
             updateCapslockLED();
         }
 
-        HIDLogDebug("_capsLockLED: %@", _capsLockLED);
+        HIDLogDebug("[%@] _capsLockLED: %@", SERVICE_ID, _capsLockLED);
 
     } else if (CFStringCompare(key, CFSTR(kIOHIDServiceCapsLockLEDInhibitKey), kNilOptions) == kCFCompareEqualTo) {
         
@@ -723,15 +735,22 @@ void IOHIDKeyboardFilter::setPropertyForClient(CFStringRef key,CFTypeRef propert
         // If ledInhibit is being turned on, turn off LED, if on.
         updateCapslockLED();
 
-        HIDLogDebug("_capsLockLEDInhibit: %d", _capsLockLEDInhibit);
+        HIDLogDebug("[%@] _capsLockLEDInhibit: %d", SERVICE_ID, _capsLockLEDInhibit);
     
     } else if (CFStringCompare(key, CFSTR(kIOHIDServiceModifierMappingPairsKey), kNilOptions) == kCFCompareEqualTo) {
         
         if (property && CFGetTypeID(property) == CFArrayGetTypeID()) {
           
-            _modifiersKeyMap = createMapFromModifiersMap((CFArrayRef) property);
+            _modifiersKeyMap = createMapFromArrayOfPairs((CFArrayRef) property);
           
-            HIDLogDebug("Modifier Mappings set");
+            // 29348498: Set caps lock to 0 if it was remapped to something else
+            KeyMap::const_iterator iter;
+            iter = _modifiersKeyMap.find(Key(kHIDPage_KeyboardOrKeypad, kHIDUsage_KeyboardCapsLock));
+            if (iter != _modifiersKeyMap.end()) {
+                setCapsLockState(false);
+            }
+            
+            HIDLogDebug("[%@] _modifiersKeyMap initialized", SERVICE_ID);
         }
         
     }  else if (CFStringCompare(key, CFSTR(kIOHIDFKeyModeKey), kNilOptions) == kCFCompareEqualTo) {
@@ -740,23 +759,23 @@ void IOHIDKeyboardFilter::setPropertyForClient(CFStringRef key,CFTypeRef propert
           
             CFNumberGetValue((CFNumberRef)property, kCFNumberSInt32Type, &_fnKeyMode);
  
-            HIDLogDebug("_fnKeyMode: %x", _fnKeyMode);
+            HIDLogDebug("[%@] _fnKeyMode: %x", SERVICE_ID, _fnKeyMode);
         }
  
-    } else if (CFStringCompare(key, CFSTR(kIOHIDUserUsageMapKey), kNilOptions) == kCFCompareEqualTo) {
+    } else if (CFStringCompare(key, CFSTR(kIOHIDUserKeyUsageMapKey), kNilOptions) == kCFCompareEqualTo) {
         
         if (property && CFGetTypeID(property) == CFArrayGetTypeID()) {
           
-            _userKeyMap = createMapFromUserDefinedMap((CFArrayRef) property);
+            _userKeyMap = createMapFromArrayOfPairs((CFArrayRef) property);
           
-            HIDLogDebug("_userKeyMap initialized");
+            HIDLogDebug("[%@] _userKeyMap initialized", SERVICE_ID);
         }
         
     } else if (CFStringCompare(key, CFSTR(kIOHIDServiceSlowKeysDelayKey), kNilOptions) == kCFCompareEqualTo) {
         if ( property && CFGetTypeID(property) == CFNumberGetTypeID() )
         {
             CFNumberGetValue((CFNumberRef)property, kCFNumberSInt32Type, &_slowKeysDelayMS);
-            HIDLogDebug("_slowKeysDelayMS = %d", (unsigned int)_slowKeysDelayMS);
+            HIDLogDebug("[%@] _slowKeysDelayMS = %d", SERVICE_ID, (unsigned int)_slowKeysDelayMS);
             if (_slowKeysDelayMS == 0) {
                 resetSlowKey();
             } else {
@@ -772,7 +791,7 @@ void IOHIDKeyboardFilter::setPropertyForClient(CFStringRef key,CFTypeRef propert
         if ( property && CFGetTypeID(property) == CFNumberGetTypeID() )
         {
             CFNumberGetValue((CFNumberRef)property, kCFNumberSInt32Type, &_ejectKeyDelayMS);
-            HIDLogDebug("_ejectKeyDelayMS: %d", _ejectKeyDelayMS);
+            HIDLogDebug("[%@] _ejectKeyDelayMS: %d", SERVICE_ID, (unsigned int)_ejectKeyDelayMS);
             if (_ejectKeyDelayMS == 0) {
                 resetEjectKeyDelay();
             }
@@ -782,7 +801,7 @@ void IOHIDKeyboardFilter::setPropertyForClient(CFStringRef key,CFTypeRef propert
         if ( property && CFGetTypeID(property) == CFNumberGetTypeID() ) {
             
             CFNumberGetValue((CFNumberRef)property, kCFNumberSInt32Type, &_capsLockDelayMS);
-            HIDLogDebug("_capsLockDelayMS: %d", (unsigned int)_capsLockDelayMS);
+            HIDLogDebug("[%@] _capsLockDelayMS: %d", SERVICE_ID, (unsigned int)_capsLockDelayMS);
             if (_capsLockDelayMS == 0) {
                 resetCapsLockDelay();
             }
@@ -791,13 +810,13 @@ void IOHIDKeyboardFilter::setPropertyForClient(CFStringRef key,CFTypeRef propert
         if ( property && CFGetTypeID(property) == CFNumberGetTypeID() ) {
             
             CFNumberGetValue((CFNumberRef)property, kCFNumberSInt32Type, &_capsLockDelayOverrideMS);
-            HIDLogDebug("_capsLockDelayOverrideMS: %d", (int)_capsLockDelayOverrideMS);
+            HIDLogDebug("[%@] _capsLockDelayOverrideMS: %d", SERVICE_ID, (int)_capsLockDelayOverrideMS);
             if ((SInt32)_capsLockDelayMS == _capsLockDelayOverrideMS) {
                 _capsLockDelayOverrideMS = -1;
             }
             
         }
-    } else if (CFEqual(key,CFSTR(kIOHIDMouseClickNotification))) {
+    } else if (CFEqual(key,CFSTR(kIOHIDResetStickyKeyNotification))) {
        //reset in flight modifier key
        if (_queue) {
          
@@ -818,12 +837,12 @@ void IOHIDKeyboardFilter::setPropertyForClient(CFStringRef key,CFTypeRef propert
     } else if (CFEqual(key, CFSTR (kIOHIDMouseKeysOnKey)) && property) {
           
         CFNumberGetValue((CFNumberRef)property, kCFNumberSInt32Type, &_numLockOn);
-        HIDLogDebug("_numLockOn: %d", _numLockOn);
+        HIDLogDebug("[%@] _numLockOn: %d", SERVICE_ID, _numLockOn);
         
     } else if (CFEqual(key, CFSTR (kIOHIDMouseKeysOptionTogglesKey)) && property) {
           
         CFNumberGetValue((CFNumberRef)property, kCFNumberSInt32Type, &_mouseKeyActivationEnable);
-        HIDLogDebug("_mouseKeyActivationEnable: %d", _mouseKeyActivationEnable);
+        HIDLogDebug("[%@] _mouseKeyActivationEnable: %d", SERVICE_ID, _mouseKeyActivationEnable);
 
         if (!_mouseKeyActivationEnable) {
             if (_mouseKeyActivationResetTimer) {
@@ -846,7 +865,7 @@ void IOHIDKeyboardFilter::setPropertyForClient(CFStringRef key,CFTypeRef propert
         
         _stickyKeyOn = stickyKeyOn;
         
-        HIDLogDebug("_stickyKeyOn: %d", stickyKeyOn);
+        HIDLogDebug("[%@] _stickyKeyOn: %d", SERVICE_ID, stickyKeyOn);
         
         if (_queue) {
             dispatch_async(_queue, ^{
@@ -873,15 +892,16 @@ SInt32 IOHIDKeyboardFilter::match(void * self, IOHIDServiceRef service, IOOption
 
 SInt32 IOHIDKeyboardFilter::match(IOHIDServiceRef service, IOOptionBits options)
 {
-    SInt32  score = 0;
-    
     (void) options;
     
-    score += IOHIDServiceConformsTo(service, kHIDPage_GenericDesktop, kHIDUsage_GD_Keyboard);
+    // Keyboard filter should be loaded before NX translator filter
+    // for key re-mappping purposes, See 30834442.
+    _matchScore = (IOHIDServiceConformsTo(service, kHIDPage_GenericDesktop, kHIDUsage_GD_Keyboard) ||
+                   IOHIDServiceConformsTo(service, kHIDPage_Consumer, kHIDUsage_Csmr_ConsumerControl)) ? 300 : 0;
     
-    score += IOHIDServiceConformsTo(service, kHIDPage_Consumer, kHIDUsage_Csmr_ConsumerControl);
+    HIDLogDebug("(%p) for ServiceID %@ with score %d", this, IOHIDServiceGetRegistryID(service), (int)_matchScore);
     
-    return score;
+    return _matchScore;
 }
 
 //------------------------------------------------------------------------------
@@ -933,7 +953,7 @@ IOHIDEventRef IOHIDKeyboardFilter::filter(IOHIDEventRef event)
         }
 #endif
         // Process key repeats if both key delays are set.
-        if (_keyRepeatInitialDelayMS && _keyRepeatDelayMS) {
+        if (_keyRepeatInitialDelayMS) {
             if (_slowKeysDelayMS) {
                 event = processKeyRepeats(event, kSlowRepeatDelayMS, kSlowRepeatDelayMS);
             } else {
@@ -1147,64 +1167,9 @@ bool isNotRepeated(UInt32 usagePage, UInt32 usage)
 
 
 //------------------------------------------------------------------------------
-// IOHIDKeyboardFilter::createMapFromModifiersMap
+// IOHIDKeyboardFilter::createMapFromArrayOfPairs
 //------------------------------------------------------------------------------
-KeyMap IOHIDKeyboardFilter::createMapFromModifiersMap(CFArrayRef mappings) {
-    KeyMap map;
-    if ( mappings == NULL || !CFArrayGetCount(mappings) ) {
-        return map;
-    }
-    // Set mappings
-    for ( CFIndex i = 0; i < CFArrayGetCount(mappings); i++ ) {
-        CFDictionaryRef	pair    = NULL;
-        CFNumberRef     num     = NULL;
-        SInt32          src     = 0;
-        SInt32          dst     = 0;
-        
-        // Get pair dictionary.
-        pair = (CFDictionaryRef)CFArrayGetValueAtIndex(mappings, i);
-        if ( pair == NULL || CFGetTypeID(pair) != CFDictionaryGetTypeID()) {
-            continue;
-        }
-
-        // Get source modifier key.
-        num = (CFNumberRef)CFDictionaryGetValue(pair, CFSTR(kIOHIDServiceModifierMappingSrcKey));
-        if ( !num ) {
-          continue;
-        }
-        CFNumberGetValue(num, kCFNumberSInt32Type, &src);
-        
-        // Get destination modifier key.
-        num = (CFNumberRef)CFDictionaryGetValue(pair, CFSTR(kIOHIDServiceModifierMappingDstKey));
-        if ( !num )  {
-          continue;
-        }
-        CFNumberGetValue(num, kCFNumberSInt32Type, &dst);
-        
-        if ((src >= NX_MODIFIERKEY_ALPHALOCK) && (src < NX_MODIFIERKEY_COUNT) &&
-            (dst >= NX_MODIFIERKEY_NOACTION) && (dst < NX_MODIFIERKEY_COUNT) &&
-            (src != dst)) {
-          
-            UInt32 usage;
-            UInt32 usagePage;
-            
-            if (getUsageForLegacyModifier( src, usagePage, usage)) {
-                Key srcKey (usagePage, usage);
-                if (getUsageForLegacyModifier( dst, usagePage, usage)) {
-                    Key dstKey (usagePage, usage);
-                    map.insert(std::make_pair(srcKey, dstKey));
-                }
-            }
-        }
-    }
-    return map;
-}
-
-
-//------------------------------------------------------------------------------
-// IOHIDKeyboardFilter::createMapFromUserDefinedMap
-//------------------------------------------------------------------------------
-KeyMap IOHIDKeyboardFilter::createMapFromUserDefinedMap(CFArrayRef mappings) {
+KeyMap IOHIDKeyboardFilter::createMapFromArrayOfPairs(CFArrayRef mappings) {
     KeyMap map;
     if ( mappings == NULL || !CFArrayGetCount(mappings) ) {
         return map;
@@ -1274,7 +1239,6 @@ KeyMap IOHIDKeyboardFilter::createMapFromStringMap(CFStringRef mappings) {
 void IOHIDKeyboardFilter::processFnKeyState(IOHIDEventRef event) {
     UInt32  usage;
     UInt32  usagePage;
-    UInt32  flags;
     bool    keyDown;
     
     if (!event) {
@@ -1341,19 +1305,29 @@ IOHIDEventRef IOHIDKeyboardFilter::processKeyMappings(IOHIDEventRef event)
     usagePage   = (UInt32)IOHIDEventGetIntegerValue(event, kIOHIDEventFieldKeyboardUsagePage);
     flags       = (UInt32)IOHIDEventGetEventFlags(event);
     
+    // do not remap active repeat key
+    if (_keyRepeatEvent &&
+        usage == (UInt32)IOHIDEventGetIntegerValue(_keyRepeatEvent, kIOHIDEventFieldKeyboardUsage) &&
+        usagePage == (UInt32)IOHIDEventGetIntegerValue(_keyRepeatEvent, kIOHIDEventFieldKeyboardUsagePage)
+        ) {
+        goto exit;
+    }
+  
     // Ignore all events with flags - these events are generally synthesized
     // and have already been remapped.
-    if ((flags & kKeyboardOptionMask) == 0 || IOHIDEventIsSlowKeyPhaseEvent(event)) {
+    if ((flags & kKeyboardOptionMask) == 0  &&
+         IOHIDEventGetIntegerValue (event, kIOHIDEventFieldKeyboardSlowKeyPhase) == kIOHIDKeyboardSlowKeyNone  &&
+         !isDelayedEvent(event)) {
       
         Key src = Key (usagePage, usage);
         Key key = remapKey (src);
-      
+
         if (!key.isValid()) {
           return NULL;
         }
       
         if (key.usage() != usage || key.usagePage() != usagePage) {
-            _IOHIDEventSetAttachment(event, CFSTR("Modified"), kCFBooleanTrue, 0);
+            _IOHIDEventSetAttachment(event, kIOHIDEventAttachment_Modified, kCFBooleanTrue, 0);
             IOHIDEventSetIntegerValue(event, kIOHIDEventFieldKeyboardUsage, key.usage());
             IOHIDEventSetIntegerValue(event, kIOHIDEventFieldKeyboardUsagePage, key.usagePage());
         }
@@ -1461,19 +1435,22 @@ void IOHIDKeyboardFilter::setStickyKeyState(UInt32 usagePage, UInt32 usage, Stic
 //------------------------------------------------------------------------------
 // IOHIDKeyboardFilter::processStickyKeyDown
 //------------------------------------------------------------------------------
-uint32_t IOHIDKeyboardFilter::processStickyKeyDown(UInt32 usagePage, UInt32 usage)
+UInt32 IOHIDKeyboardFilter::processStickyKeyDown(UInt32 usagePage, UInt32 usage, UInt32 &flags)
 {
+
     StickyKeyState state = getStickyKeyState(usagePage, usage);
     StickyKeyState newState = state;
-    uint32_t  flags = 0;
+    UInt32  stickyKeyPhase = 0;
     switch (state) {
         case kStickyKeyState_Reset:
             // First mod press
             flags = kIOHIDKeyboardStickyKeyDown;
+            stickyKeyPhase = kIOHIDKeyboardStickyKeyPhaseDown;
             newState = kStickyKeyState_Down_Locked;
             break;
         case kStickyKeyState_Down:
             flags = kIOHIDKeyboardStickyKeyLocked;
+            stickyKeyPhase = kIOHIDKeyboardStickyKeyPhaseLocked;
             newState = kStickyKeyState_Locked;
             break;
         case kStickyKeyState_Locked:
@@ -1487,34 +1464,36 @@ uint32_t IOHIDKeyboardFilter::processStickyKeyDown(UInt32 usagePage, UInt32 usag
   
     setStickyKeyState(usagePage, usage, newState);
   
-    HIDLogDebug("StickyKey DOWN 0x%x:0x%x flags 0x%x",
+    HIDLogDebug("StickyKey DOWN 0x%x:0x%x phase 0x%x",
               (unsigned int)usage,
               (unsigned int)usagePage,
-              flags
+              (unsigned int)stickyKeyPhase
               );
 
-    return flags;
+    return stickyKeyPhase;
 }
 
 //------------------------------------------------------------------------------
 // IOHIDKeyboardFilter::processStickyKeyUp
 //------------------------------------------------------------------------------
-uint32_t IOHIDKeyboardFilter::processStickyKeyUp(UInt32 usagePage, UInt32 usage)
+UInt32 IOHIDKeyboardFilter::processStickyKeyUp(UInt32 usagePage, UInt32 usage, UInt32 &flags)
 {
     StickyKeyState state = getStickyKeyState(usagePage, usage);
     StickyKeyState newState = state;
-    uint32_t flags = 0;
-  
+    UInt32 stickyKeyPhase = 0;
+
     switch (state) {
         case kStickyKeyState_Reset:
             // going from lock to unlocked
             flags = kIOHIDKeyboardStickyKeyUp;
+            stickyKeyPhase = kIOHIDKeyboardStickyKeyPhaseUp;
             break;
         case kStickyKeyState_Down_Locked:
             newState = kStickyKeyState_Down;
             break;
         case kStickyKeyState_Down_Unlocked:
             flags = kIOHIDKeyboardStickyKeyUp;
+            stickyKeyPhase = kIOHIDKeyboardStickyKeyPhaseUp;
             newState = kStickyKeyState_Reset;
             break;
         case kStickyKeyState_Locked:
@@ -1528,13 +1507,13 @@ uint32_t IOHIDKeyboardFilter::processStickyKeyUp(UInt32 usagePage, UInt32 usage)
        setStickyKeyState(usagePage, usage, newState);
     }
 
-    HIDLogDebug("StickyKey UP 0x%x:0x%x flags 0x%x",
+    HIDLogDebug("StickyKey UP 0x%x:0x%x phase 0x%x",
               (unsigned int)usage,
               (unsigned int)usagePage,
-              flags
+              (unsigned int)stickyKeyPhase
               );
   
-    return flags;
+    return stickyKeyPhase;
 }
 
 //------------------------------------------------------------------------------
@@ -1579,12 +1558,11 @@ void IOHIDKeyboardFilter::dispatchStickyKeys(int stateMask)
         if ((state & stateMask) == 0)
             continue;
 
-        
         IOHIDEventRef event = IOHIDEventCreateKeyboardEvent(kCFAllocatorDefault, mach_absolute_time(), usagePage, usage, 0, kIOHIDKeyboardStickyKeyUp);
         if (!event) {
             continue;
         }
-
+        IOHIDEventSetIntegerValue(event, kIOHIDEventFieldKeyboardStickyKeyPhase, kIOHIDKeyboardStickyKeyPhaseUp);
         _eventCallback(_eventTarget, _eventContext, &_serviceInterface, event, 0);
         
         CFRelease(event);
@@ -1617,7 +1595,7 @@ void IOHIDKeyboardFilter::processShiftKey(void)
         _stickyKeysShiftKeyCount = 0;
         _stickyKeyOn = !_stickyKeyOn;
       
-        HIDLogDebug("StickyKey state change (5xSHIFT) to %s", _stickyKeyOn ? "ON" : "OFF");
+        HIDLogDebug("[%@] StickyKey state change (5xSHIFT) to %s", SERVICE_ID, _stickyKeyOn ? "ON" : "OFF");
       
         IOHIDServiceSetProperty(_service, CFSTR(kIOHIDServiceStickyKeysOnKey), (_stickyKeyOn ? kCFBooleanTrue : kCFBooleanFalse));
 
@@ -1639,11 +1617,12 @@ IOHIDEventRef IOHIDKeyboardFilter::processStickyKeys(IOHIDEventRef event)
 {
     UInt32  usage;
     UInt32  usagePage;
-    UInt32  flags;
+    UInt32  flags = 0;
     bool    keyDown;
     bool    stickyKeysOn  = _stickyKeyOn;
+    UInt32  stickyKeyPhase;
     
-    if (!event || (IOHIDEventGetEventFlags(event) & kIOHIDKeyboardStickyKeyUp) || IOHIDEventIsSlowKeyPhaseEvent(event)) {
+    if (!event || (IOHIDEventGetIntegerValue(event, kIOHIDEventFieldKeyboardStickyKeyPhase) == kIOHIDKeyboardStickyKeyPhaseUp) || IOHIDEventIsSlowKeyPhaseEvent(event)) {
         goto exit;
     }
     
@@ -1668,6 +1647,7 @@ IOHIDEventRef IOHIDKeyboardFilter::processStickyKeys(IOHIDEventRef event)
         // Sticky key turned off by shift key
         if (_stickyKeyOn != stickyKeysOn) {
             IOHIDEventSetEventFlags(event, IOHIDEventGetEventFlags(event) | kIOHIDKeyboardStickyKeysOff);
+            IOHIDEventSetIntegerValue(event, kIOHIDEventFieldKeyboardStickyKeyToggle, kIOHIDKeyboardStickyKeyToggleOff);
         }
         goto exit;
     }
@@ -1694,6 +1674,7 @@ IOHIDEventRef IOHIDKeyboardFilter::processStickyKeys(IOHIDEventRef event)
         // Sticky keys turned on by shift key ? send this shift key through
         if (_stickyKeyOn != stickyKeysOn) {
             IOHIDEventSetEventFlags(event, IOHIDEventGetEventFlags(event) | kIOHIDKeyboardStickyKeysOn);
+            IOHIDEventSetIntegerValue(event, kIOHIDEventFieldKeyboardStickyKeyToggle, kIOHIDKeyboardStickyKeyToggleOn);
             goto exit;
         }
         
@@ -1701,17 +1682,18 @@ IOHIDEventRef IOHIDKeyboardFilter::processStickyKeys(IOHIDEventRef event)
         // At this point the the key we have is a modifier key
         // send it down the state machine
         if (keyDown) {
-            flags = processStickyKeyDown(usagePage, usage);
+            stickyKeyPhase = processStickyKeyDown(usagePage, usage, flags);
         } else {
-            flags = processStickyKeyUp(usagePage, usage);
+            stickyKeyPhase = processStickyKeyUp(usagePage, usage, flags);
         }
         
-        if (!flags) {
+        if (stickyKeyPhase == 0) {
             event = NULL;
         } else {
             usage = makeModifierLeftHanded(usage);
             IOHIDEventSetIntegerValue(event, kIOHIDEventFieldKeyboardUsage, usage);
             IOHIDEventSetEventFlags(event, IOHIDEventGetEventFlags(event) | flags);
+            IOHIDEventSetIntegerValue(event, kIOHIDEventFieldKeyboardStickyKeyPhase, stickyKeyPhase);
         }
     }
     
@@ -1735,6 +1717,7 @@ void IOHIDKeyboardFilter::startStickyKey () {
                                       0,
                                       kIOHIDKeyboardStickyKeyUp);
             if (event) {
+                IOHIDEventSetIntegerValue(event, kIOHIDEventFieldKeyboardStickyKeyPhase, kIOHIDKeyboardStickyKeyPhaseUp);
                 _eventCallback(_eventTarget, _eventContext, &_serviceInterface, event, 0);
                 CFRelease(event);
             }
@@ -1817,6 +1800,13 @@ IOHIDEventRef IOHIDKeyboardFilter::processSlowKeys(IOHIDEventRef event)
     usagePage   = (UInt32)IOHIDEventGetIntegerValue(event, kIOHIDEventFieldKeyboardUsagePage);
     keyDown     = (UInt32)IOHIDEventGetIntegerValue(event, kIOHIDEventFieldKeyboardDown);
     
+#if !TARGET_OS_EMBEDDED
+    // 29559398: slow key should not be allowed for mesa button since
+    // triple-click is used to bring up accessibility options.
+    if (usagePage == kHIDPage_Consumer && usage == kHIDUsage_Csmr_Menu) {
+        goto exit;
+    }
+#endif
  
     if (keyDown) {
 #if !TARGET_OS_EMBEDDED
@@ -1971,7 +1961,7 @@ void IOHIDKeyboardFilter::processCapsLockState(IOHIDEventRef event)
         // LED and Caps Lock state change on key down.
         if (keyDown) {
             _capsLockState = !_capsLockState;
-            HIDLogDebug("CapsLock state: %s", _capsLockState ? "ON" : "OFF");
+            HIDLogDebug("[%@] CapsLock state: %s", SERVICE_ID, _capsLockState ? "ON" : "OFF");
 
 #if !TARGET_OS_EMBEDDED
             updateCapslockLED ();
@@ -2006,8 +1996,6 @@ void  IOHIDKeyboardFilter::dispatchCapsLock(void)
     
     if (!event)
         return;
-    
-    IOHIDEventSetEventFlags(event, IOHIDEventGetEventFlags(event) | kIOHIDKeyboardDelayedKey);
     
     _eventCallback(_eventTarget, _eventContext, &_serviceInterface, event, 0);
     
@@ -2044,13 +2032,13 @@ IOHIDEventRef IOHIDKeyboardFilter::processCapsLockDelay(IOHIDEventRef event)
     usagePage   = (UInt32)IOHIDEventGetIntegerValue(event, kIOHIDEventFieldKeyboardUsagePage);
     keyDown     = (UInt32)IOHIDEventGetIntegerValue(event, kIOHIDEventFieldKeyboardDown);
     
-    if ( !((usagePage == kHIDPage_KeyboardOrKeypad) && (usage == kHIDUsage_KeyboardCapsLock)) )
+    if ( !((usagePage == kHIDPage_KeyboardOrKeypad) && (usage == kHIDUsage_KeyboardCapsLock))) {
         goto exit;
-
+    }
+  
     // Let through already-delayed caps lock events.
-    if ((IOHIDEventGetEventFlags(event) & kIOHIDKeyboardDelayedKey) != 0) {
-        // Remove the flag before letting it through?
-        IOHIDEventSetEventFlags(event, IOHIDEventGetEventFlags(event) & ~kIOHIDKeyboardDelayedKey);
+    if (isDelayedEvent(event)) {
+        _IOHIDEventRemoveAttachment(event, kIOHIDEventAttachment_Delayed, 0);
         goto exit;
     }
 
@@ -2061,7 +2049,9 @@ IOHIDEventRef IOHIDKeyboardFilter::processCapsLockDelay(IOHIDEventRef event)
         dispatch_source_set_timer(_capsLockDelayTimer,
                                   dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_MSEC * capsLockDelayMS),
                                   DISPATCH_TIME_FOREVER, 0);
-        
+      
+        _IOHIDEventSetAttachment(event, kIOHIDEventAttachment_Delayed, kCFBooleanTrue, 0);
+
         _delayedCapsLockEvent = event;
 
         CFRetain(event);
@@ -2105,8 +2095,6 @@ void  IOHIDKeyboardFilter::dispatchEjectKey(void)
     if (!event)
         return;
     
-    IOHIDEventSetEventFlags(event, IOHIDEventGetEventFlags(event) | kIOHIDKeyboardDelayedKey);
-    
     _eventCallback(_eventTarget, _eventContext, &_serviceInterface, event, 0);
     
     CFRelease (event);
@@ -2141,14 +2129,13 @@ IOHIDEventRef IOHIDKeyboardFilter::processEjectKeyDelay(IOHIDEventRef event)
     usagePage   = (UInt32)IOHIDEventGetIntegerValue(event, kIOHIDEventFieldKeyboardUsagePage);
     keyDown     = (UInt32)IOHIDEventGetIntegerValue(event, kIOHIDEventFieldKeyboardDown);
     
-    if ( !((usagePage == kHIDPage_Consumer) && (usage == kHIDUsage_Csmr_Eject)) )
+    if (!((usagePage == kHIDPage_Consumer) && (usage == kHIDUsage_Csmr_Eject))) {
         goto exit;
-
-    // Let through already-delayed eject key events.
-    if ((IOHIDEventGetEventFlags(event) & kIOHIDKeyboardDelayedKey) != 0) {
-      // Remove the flag before letting it through?
-      IOHIDEventSetEventFlags(event, IOHIDEventGetEventFlags(event) & ~kIOHIDKeyboardDelayedKey);
-      goto exit;
+    }
+  
+    if (isDelayedEvent(event)) {
+        _IOHIDEventRemoveAttachment(event, kIOHIDEventAttachment_Delayed, 0);
+        goto exit;
     }
 
     HIDLogDebug("keyDown = %d _delayedEjectKeyEvent = %p", (int)keyDown, _delayedEjectKeyEvent);
@@ -2158,6 +2145,9 @@ IOHIDEventRef IOHIDKeyboardFilter::processEjectKeyDelay(IOHIDEventRef event)
                                   dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_MSEC * _ejectKeyDelayMS),
                                   DISPATCH_TIME_FOREVER, 0);
         
+      
+        _IOHIDEventSetAttachment(event, kIOHIDEventAttachment_Delayed, kCFBooleanTrue, 0);
+
         _delayedEjectKeyEvent = event;
         
         CFRetain(_delayedEjectKeyEvent);
@@ -2214,7 +2204,7 @@ IOHIDEventRef IOHIDKeyboardFilter::processMouseKeys (IOHIDEventRef event) {
     
     } else if (_mouseKeyActivationCount >= kMouseKeyActivationCount) {
     
-        HIDLogDebug("MouseKey (5xALT) Toggle");
+        HIDLogDebug("[%@] MouseKey (5xALT) Toggle", SERVICE_ID);
         IOHIDEventSetIntegerValue(event, kIOHIDEventFieldKeyboardMouseKeyToggle, kIOHIDKeyboardMouseKeyToggle);
         _mouseKeyActivationCount = 0;
         
@@ -2234,14 +2224,15 @@ exit:
 //------------------------------------------------------------------------------
 kern_return_t IOHIDKeyboardFilter::setHIDSystemParam(CFStringRef key, uint32_t property) {
     kern_return_t kr = kIOReturnInvalid;
-    NXEventHandle hidSystem = NXOpenEventStatus();
+    NXEventHandle hidSystem = openHIDSystem();
+    
     if (hidSystem) {
         CFNumberRef value = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &property);
         if (value) {
             kr = IOConnectSetCFProperty(hidSystem, key , value);
             CFRelease(value);
         }
-        NXCloseEventStatus(hidSystem);
+        IOServiceClose(hidSystem);
     }
     return kr;
 }
@@ -2267,7 +2258,7 @@ void IOHIDKeyboardFilter::processKeyState (IOHIDEventRef event) {
     keyDown     = (uint32_t)IOHIDEventGetIntegerValue(event, kIOHIDEventFieldKeyboardDown);
     flags       = (uint32_t)IOHIDEventGetEventFlags(event);
     
-    modified = (CFBooleanRef)_IOHIDEventCopyAttachment(event, CFSTR("Modified"), 0);
+    modified = (CFBooleanRef)_IOHIDEventCopyAttachment(event, kIOHIDEventAttachment_Modified, 0);
     if (modified == kCFBooleanTrue) {
         key = Key(usagePage, usage, true);
     } else {
@@ -2286,13 +2277,6 @@ void IOHIDKeyboardFilter::processKeyState (IOHIDEventRef event) {
             _activeKeys.erase(iter);
         }
     }
-    DEBUG_CODE ({
-        std::stringstream s;
-        for(auto const entry : _activeKeys) {
-          s <<"0x"<<std::hex<<entry.first.usagePage()<<":0x"<<std::hex<<entry.first.usage()<<" ";
-        }
-        HIDLogDebug("ActiveKeys: %s", s.str().c_str());
-    });
 }
 
 //------------------------------------------------------------------------------
@@ -2330,7 +2314,7 @@ void IOHIDKeyboardFilter::updateCapslockLED() {
     }
     
     if (_service) {
-        HIDLogDebug ("Set Capslock LED: %d", _capsLockLEDState);
+        HIDLogDebug ("[%@] Set Capslock LED: %d", SERVICE_ID, _capsLockLEDState);
         IOHIDServiceSetElementValue(_service, kHIDPage_LEDs, kHIDUsage_LED_CapsLock, _capsLockLEDState);
     }
 }
@@ -2359,15 +2343,33 @@ void IOHIDKeyboardFilter::serialize (CFMutableDictionaryRef dict) const {
     serializer.SetValueForKey(CFSTR("Class"), CFSTR("IOHIDKeyboardFilter"));
     serializer.SetValueForKey(CFSTR(kFnFunctionUsageMapKey),serializeMapper(_fnFunctionUsageMapKeyMap));
     serializer.SetValueForKey(CFSTR(kFnKeyboardUsageMapKey), serializeMapper(_fnKeyboardUsageMapKeyMap));
+    serializer.SetValueForKey(CFSTR(kIOHIDServiceModifierMappingPairsKey), serializeMapper(_modifiersKeyMap));
     serializer.SetValueForKey(CFSTR(kNumLockKeyboardUsageMapKey), serializeMapper(_numLockKeyboardUsageMapKeyMap));
-    serializer.SetValueForKey(CFSTR(kIOHIDUserUsageMapKey), serializeMapper(_userKeyMap));
+    serializer.SetValueForKey(CFSTR(kIOHIDUserKeyUsageMapKey), serializeMapper(_userKeyMap));
+    serializer.SetValueForKey(CFSTR(kIOHIDServiceInitialKeyRepeatDelayKey), (uint64_t)_keyRepeatInitialDelayMS);
+    serializer.SetValueForKey(CFSTR(kIOHIDServiceKeyRepeatDelayKey), (uint64_t)_keyRepeatDelayMS);
+    serializer.SetValueForKey(CFSTR("CapsLockState"), (uint64_t)_capsLockState);
+    serializer.SetValueForKey(CFSTR("MatchScore"), (uint64_t)_matchScore);
 }
 
 
-void IOHIDKeyboardFilter::defaultEventCallback (void * target, void *  refcon, void * sender, IOHIDEventRef event, IOOptionBits options) {
+void IOHIDKeyboardFilter::defaultEventCallback (void *target __unused, void *refcon __unused, void *sender __unused, IOHIDEventRef event __unused, IOOptionBits options __unused) {
     HIDLogDebug("Event dropped: %@", event);
 }
 
+bool IOHIDKeyboardFilter::isDelayedEvent(IOHIDEventRef event)
+{
+    bool            result = false;
+    CFBooleanRef    value;
+    
+    value = (CFBooleanRef)_IOHIDEventCopyAttachment(event, kIOHIDEventAttachment_Delayed, 0);
+    if (value) {
+        result = (value == kCFBooleanTrue);
+        CFRelease(value);
+    }
+    
+    return result;
+}
 
 #if !TARGET_OS_EMBEDDED
 //------------------------------------------------------------------------------
@@ -2483,6 +2485,25 @@ bool IOHIDKeyboardFilter::isModifiersPressed () {
         }
     }
     return false;
+}
+
+static NXEventHandle openHIDSystem(void)
+{
+    kern_return_t    kr;
+    io_service_t     service = MACH_PORT_NULL;
+    NXEventHandle    handle = MACH_PORT_NULL;
+    mach_port_t      masterPort;
+    
+    kr = IOMasterPort(MACH_PORT_NULL, &masterPort);
+    if(kr == KERN_SUCCESS) {
+        service = IORegistryEntryFromPath(masterPort, kIOServicePlane ":/IOResources/IOHIDSystem");
+        if (service) {
+            IOServiceOpen(service, mach_task_self(), kIOHIDParamConnectType, &handle);
+            IOObjectRelease(service);
+        }
+    }
+    
+    return handle;
 }
 
 #endif
