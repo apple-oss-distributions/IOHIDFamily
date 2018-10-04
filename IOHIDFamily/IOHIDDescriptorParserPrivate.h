@@ -20,10 +20,14 @@
  * 
  * @APPLE_LICENSE_HEADER_END@
  */
-#ifndef _IOKIT_HID_IOHIDPARSERPRIV_H
-#define _IOKIT_HID_IOHIDPARSERPRIV_H
+#ifndef _IOKIT_HID_IOHIDDESCRIPTORPARSERPRIVATE_H
+#define _IOKIT_HID_IOHIDDESCRIPTORPARSERPRIVATE_H
 
 /* the following constants are from the USB HID Specification (www.usb.org)*/
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /*------------------------------------------------------------------------------*/
 /*																				*/
@@ -53,7 +57,7 @@ enum {
 	kHIDDataConstant			= 0x01
 };
 
-#if KERNEL
+//#if KERNEL
 /*------------------------------------------------------------------------------*/
 /*																				*/
 /* HID Header																	*/
@@ -284,9 +288,6 @@ struct HIDPreparsedData
 typedef struct HIDPreparsedData HIDPreparsedData;
 typedef HIDPreparsedData * HIDPreparsedDataPtr;
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 // Private methods
 extern 
@@ -297,8 +298,4 @@ HIDGetCollectionExtendedNodes ( HIDCollectionExtendedNodePtr	collectionNodes,
 #ifdef __cplusplus
 }
 #endif
-
-
-#endif
-
-#endif /* !_IOKIT_HID_IOHIDPARSERPRIV_H */
+#endif /* !_IOKIT_HID_IOHIDDESCRIPTORPARSERPRIVATE_H */

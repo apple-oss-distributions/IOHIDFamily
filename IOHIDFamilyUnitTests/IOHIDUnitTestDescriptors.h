@@ -10,6 +10,7 @@
 #define IOHIDUnitTestDescriptors_h
 
 
+
 //--------------------------------------------------------------------------------
 // Decoded Application Collection
 //--------------------------------------------------------------------------------
@@ -1872,6 +1873,241 @@ typedef struct __attribute__((packed))
 // Decoded Application Collection
 //--------------------------------------------------------------------------------
 
+#define HIDDigitizerForHangdog \
+0x05, 0x0D,                  /* (GLOBAL) USAGE_PAGE         0x000D Digitizer Device Page  */\
+0x09, 0x05,                  /* (LOCAL)  USAGE              0x000D0005 Touch Pad (CA=Application Collection)  */\
+0xA1, 0x01,                  /* (MAIN)   COLLECTION         0x01 Application (Usage=0x000D0005: Page=Digitizer Device Page, Usage=Touch Pad, Type=CA) */\
+0x05, 0x0D,                  /*   (GLOBAL) USAGE_PAGE         0x000D Digitizer Device Page <-- Redundant: USAGE_PAGE is already 0x000D   */\
+0x09, 0x22,                  /*   (LOCAL)  USAGE              0x000D0022 Finger (CL=Logical Collection)    */\
+0xA1, 0x02,                  /*   (MAIN)   COLLECTION         0x02 Logical (Usage=0x000D0022: Page=Digitizer Device Page, Usage=Finger, Type=CL)   */\
+0x05, 0x0D,                  /*     (GLOBAL) USAGE_PAGE         0x000D Digitizer Device Page <-- Redundant: USAGE_PAGE is already 0x000D     */\
+0x09, 0x38,                  /*     (LOCAL)  USAGE              0x000D0038 Transducer Index (DV=Dynamic Value)      */\
+0x75, 0x08,                  /*     (GLOBAL) REPORT_SIZE        0x08 (8) Number of bits per field       */\
+0x95, 0x01,                  /*     (GLOBAL) REPORT_COUNT       0x01 (1) Number of fields       */\
+0x81, 0x02,                  /*     (MAIN)   INPUT              0x00000002 (1 field x 8 bits) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap      */\
+0x09, 0x33,                  /*     (LOCAL)  USAGE              0x000D0033 Touch (MC=Momentary Control)      */\
+0x15, 0x00,                  /*     (GLOBAL) LOGICAL_MINIMUM    0x00 (0) <-- Redundant: LOGICAL_MINIMUM is already 0 <-- Info: Consider replacing 15 00 with 14     */\
+0x25, 0x01,                  /*     (GLOBAL) LOGICAL_MAXIMUM    0x01 (1)       */\
+0x75, 0x01,                  /*     (GLOBAL) REPORT_SIZE        0x01 (1) Number of bits per field       */\
+0x95, 0x01,                  /*     (GLOBAL) REPORT_COUNT       0x01 (1) Number of fields <-- Redundant: REPORT_COUNT is already 1      */\
+0x81, 0x02,                  /*     (MAIN)   INPUT              0x00000002 (1 field x 1 bit) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap      */\
+0x75, 0x07,                  /*     (GLOBAL) REPORT_SIZE        0x07 (7) Number of bits per field       */\
+0x95, 0x01,                  /*     (GLOBAL) REPORT_COUNT       0x01 (1) Number of fields <-- Redundant: REPORT_COUNT is already 1      */\
+0x81, 0x01,                  /*     (MAIN)   INPUT              0x00000001 (1 field x 7 bits) 1=Constant 0=Array 0=Absolute 0=Ignored 0=Ignored 0=PrefState 0=NoNull      */\
+0x05, 0x01,                  /*     (GLOBAL) USAGE_PAGE         0x0001 Generic Desktop Page      */\
+0x09, 0x30,                  /*     (LOCAL)  USAGE              0x00010030 X (DV=Dynamic Value)      */\
+0x15, 0x00,                  /*     (GLOBAL) LOGICAL_MINIMUM    0x00 (0) <-- Redundant: LOGICAL_MINIMUM is already 0 <-- Info: Consider replacing 15 00 with 14     */\
+0x26, 0x20, 0x03,            /*     (GLOBAL) LOGICAL_MAXIMUM    0x0320 (800)       */\
+0x75, 0x10,                  /*     (GLOBAL) REPORT_SIZE        0x10 (16) Number of bits per field       */\
+0x95, 0x01,                  /*     (GLOBAL) REPORT_COUNT       0x01 (1) Number of fields <-- Redundant: REPORT_COUNT is already 1      */\
+0x81, 0x02,                  /*     (MAIN)   INPUT              0x00000002 (1 field x 16 bits) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap      */\
+0x09, 0x31,                  /*     (LOCAL)  USAGE              0x00010031 Y (DV=Dynamic Value)      */\
+0x15, 0x00,                  /*     (GLOBAL) LOGICAL_MINIMUM    0x00 (0) <-- Redundant: LOGICAL_MINIMUM is already 0 <-- Info: Consider replacing 15 00 with 14     */\
+0x26, 0xE0, 0x01,            /*     (GLOBAL) LOGICAL_MAXIMUM    0x01E0 (480)       */\
+0x75, 0x10,                  /*     (GLOBAL) REPORT_SIZE        0x10 (16) Number of bits per field <-- Redundant: REPORT_SIZE is already 16      */\
+0x95, 0x01,                  /*     (GLOBAL) REPORT_COUNT       0x01 (1) Number of fields <-- Redundant: REPORT_COUNT is already 1      */\
+0x81, 0x02,                  /*     (MAIN)   INPUT              0x00000002 (1 field x 16 bits) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap      */\
+0xC0,                        /*   (MAIN)   END_COLLECTION     Logical   */\
+0x05, 0x0D,                  /*   (GLOBAL) USAGE_PAGE         0x000D Digitizer Device Page    */\
+0x09, 0x22,                  /*   (LOCAL)  USAGE              0x000D0022 Finger (CL=Logical Collection)    */\
+0xA1, 0x02,                  /*   (MAIN)   COLLECTION         0x02 Logical (Usage=0x000D0022: Page=Digitizer Device Page, Usage=Finger, Type=CL)   */\
+0x05, 0x0D,                  /*     (GLOBAL) USAGE_PAGE         0x000D Digitizer Device Page <-- Redundant: USAGE_PAGE is already 0x000D     */\
+0x09, 0x38,                  /*     (LOCAL)  USAGE              0x000D0038 Transducer Index (DV=Dynamic Value)      */\
+0x75, 0x08,                  /*     (GLOBAL) REPORT_SIZE        0x08 (8) Number of bits per field       */\
+0x95, 0x01,                  /*     (GLOBAL) REPORT_COUNT       0x01 (1) Number of fields <-- Redundant: REPORT_COUNT is already 1      */\
+0x81, 0x02,                  /*     (MAIN)   INPUT              0x00000002 (1 field x 8 bits) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap  <-- Error: REPORT_SIZE (8) is too small for LOGICAL_MAXIMUM (480) which needs 9 bits.     */\
+0x09, 0x33,                  /*     (LOCAL)  USAGE              0x000D0033 Touch (MC=Momentary Control)      */\
+0x15, 0x00,                  /*     (GLOBAL) LOGICAL_MINIMUM    0x00 (0) <-- Redundant: LOGICAL_MINIMUM is already 0 <-- Info: Consider replacing 15 00 with 14     */\
+0x25, 0x01,                  /*     (GLOBAL) LOGICAL_MAXIMUM    0x01 (1)       */\
+0x75, 0x01,                  /*     (GLOBAL) REPORT_SIZE        0x01 (1) Number of bits per field       */\
+0x95, 0x01,                  /*     (GLOBAL) REPORT_COUNT       0x01 (1) Number of fields <-- Redundant: REPORT_COUNT is already 1      */\
+0x81, 0x02,                  /*     (MAIN)   INPUT              0x00000002 (1 field x 1 bit) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap      */\
+0x75, 0x07,                  /*     (GLOBAL) REPORT_SIZE        0x07 (7) Number of bits per field       */\
+0x95, 0x01,                  /*     (GLOBAL) REPORT_COUNT       0x01 (1) Number of fields <-- Redundant: REPORT_COUNT is already 1      */\
+0x81, 0x01,                  /*     (MAIN)   INPUT              0x00000001 (1 field x 7 bits) 1=Constant 0=Array 0=Absolute 0=Ignored 0=Ignored 0=PrefState 0=NoNull      */\
+0x05, 0x01,                  /*     (GLOBAL) USAGE_PAGE         0x0001 Generic Desktop Page      */\
+0x09, 0x30,                  /*     (LOCAL)  USAGE              0x00010030 X (DV=Dynamic Value)      */\
+0x15, 0x00,                  /*     (GLOBAL) LOGICAL_MINIMUM    0x00 (0) <-- Redundant: LOGICAL_MINIMUM is already 0 <-- Info: Consider replacing 15 00 with 14     */\
+0x26, 0x20, 0x03,            /*     (GLOBAL) LOGICAL_MAXIMUM    0x0320 (800)       */\
+0x75, 0x10,                  /*     (GLOBAL) REPORT_SIZE        0x10 (16) Number of bits per field       */\
+0x95, 0x01,                  /*     (GLOBAL) REPORT_COUNT       0x01 (1) Number of fields <-- Redundant: REPORT_COUNT is already 1      */\
+0x81, 0x02,                  /*     (MAIN)   INPUT              0x00000002 (1 field x 16 bits) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap      */\
+0x09, 0x31,                  /*     (LOCAL)  USAGE              0x00010031 Y (DV=Dynamic Value)      */\
+0x15, 0x00,                  /*     (GLOBAL) LOGICAL_MINIMUM    0x00 (0) <-- Redundant: LOGICAL_MINIMUM is already 0 <-- Info: Consider replacing 15 00 with 14     */\
+0x26, 0xE0, 0x01,            /*     (GLOBAL) LOGICAL_MAXIMUM    0x01E0 (480)       */\
+0x75, 0x10,                  /*     (GLOBAL) REPORT_SIZE        0x10 (16) Number of bits per field <-- Redundant: REPORT_SIZE is already 16      */\
+0x95, 0x01,                  /*     (GLOBAL) REPORT_COUNT       0x01 (1) Number of fields <-- Redundant: REPORT_COUNT is already 1      */\
+0x81, 0x02,                  /*     (MAIN)   INPUT              0x00000002 (1 field x 16 bits) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap      */\
+0xC0,                        /*   (MAIN)   END_COLLECTION     Logical   */\
+0x06, 0x60, 0xFF,            /*   (GLOBAL) USAGE_PAGE         0xFF60 Vendor-defined    */\
+0x09, 0x05,                  /*   (LOCAL)  USAGE              0xFF600005     */\
+0x75, 0x01,                  /*   (GLOBAL) REPORT_SIZE        0x01 (1) Number of bits per field     */\
+0x95, 0x01,                  /*   (GLOBAL) REPORT_COUNT       0x01 (1) Number of fields <-- Redundant: REPORT_COUNT is already 1    */\
+0x81, 0x02,                  /*   (MAIN)   INPUT              0x00000002 (1 field x 1 bit) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap  <-- Error: REPORT_SIZE (1) is too small for LOGICAL_MAXIMUM (480) which needs 9 bits.   */\
+0x75, 0x07,                  /*   (GLOBAL) REPORT_SIZE        0x07 (7) Number of bits per field     */\
+0x95, 0x01,                  /*   (GLOBAL) REPORT_COUNT       0x01 (1) Number of fields <-- Redundant: REPORT_COUNT is already 1    */\
+0xC0,                        /* (MAIN)   END_COLLECTION     Application */\
+
+
+//--------------------------------------------------------------------------------
+// Digitizer Device Page HIDDigitizerForHangdogInputReport (Device --> Host)
+//--------------------------------------------------------------------------------
+
+typedef struct __attribute__((packed))
+{
+    // No REPORT ID byte
+    
+    // Field:   1
+    // Width:   8
+    // Count:   1
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:000D LMIN:0 LMAX:0 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:8 RID:0 RCNT:1
+    // Locals:  USAG:000D0038 UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  000D0038
+    // Coll:    TouchPad Finger
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0x000D: Digitizer Device Page
+    // Collection: TouchPad Finger
+    uint8_t  DIG_TouchPadFingerTransducerIndex;        // Usage 0x000D0038: Transducer Index, Value = 0 to 0
+    
+    // Field:   2
+    // Width:   1
+    // Count:   1
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:000D LMIN:0 LMAX:1 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:1 RID:0 RCNT:1
+    // Locals:  USAG:000D0033 UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  000D0033
+    // Coll:    TouchPad Finger
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0x000D: Digitizer Device Page
+    uint8_t  DIG_TouchPadFingerTouch : 1;              // Usage 0x000D0033: Touch, Value = 0 to 1
+    
+    // Field:   3
+    // Width:   7
+    // Count:   1
+    // Flags:   00000001: 1=Constant 0=Array 0=Absolute 0=Ignored 0=Ignored 0=PrefState 0=NoNull
+    // Globals: PAGE:000D LMIN:0 LMAX:1 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:7 RID:0 RCNT:1
+    // Locals:  USAG:0 UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:
+    // Coll:    TouchPad Finger
+    // Access:  Read/Only
+    // Type:    Array
+    // Page 0x000D: Digitizer Device Page
+    uint8_t  : 7;                                      // Pad
+    
+    // Field:   4
+    // Width:   16
+    // Count:   1
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:0001 LMIN:0 LMAX:800 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:16 RID:0 RCNT:1
+    // Locals:  USAG:00010030 UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  00010030
+    // Coll:    TouchPad Finger
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0x0001: Generic Desktop Page
+    uint16_t GD_TouchPadFingerX;                       // Usage 0x00010030: X, Value = 0 to 800
+    
+    // Field:   5
+    // Width:   16
+    // Count:   1
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:0001 LMIN:0 LMAX:480 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:16 RID:0 RCNT:1
+    // Locals:  USAG:00010031 UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  00010031
+    // Coll:    TouchPad Finger
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0x0001: Generic Desktop Page
+    uint16_t GD_TouchPadFingerY;                       // Usage 0x00010031: Y, Value = 0 to 480
+    
+    // Field:   6
+    // Width:   8
+    // Count:   1
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:000D LMIN:0 LMAX:480 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:8 RID:0 RCNT:1
+    // Locals:  USAG:000D0038 UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  000D0038
+    // Coll:    TouchPad Finger
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0x000D: Digitizer Device Page
+    uint8_t  DIG_TouchPadFingerTransducerIndex_1;      // Usage 0x000D0038: Transducer Index, Value = 0 to 480
+    
+    // Field:   7
+    // Width:   1
+    // Count:   1
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:000D LMIN:0 LMAX:1 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:1 RID:0 RCNT:1
+    // Locals:  USAG:000D0033 UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  000D0033
+    // Coll:    TouchPad Finger
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0x000D: Digitizer Device Page
+    uint8_t  DIG_TouchPadFingerTouch_1 : 1;            // Usage 0x000D0033: Touch, Value = 0 to 1
+    
+    // Field:   8
+    // Width:   7
+    // Count:   1
+    // Flags:   00000001: 1=Constant 0=Array 0=Absolute 0=Ignored 0=Ignored 0=PrefState 0=NoNull
+    // Globals: PAGE:000D LMIN:0 LMAX:1 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:7 RID:0 RCNT:1
+    // Locals:  USAG:0 UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:
+    // Coll:    TouchPad Finger
+    // Access:  Read/Only
+    // Type:    Array
+    // Page 0x000D: Digitizer Device Page
+    uint8_t  : 7;                                      // Pad
+    
+    // Field:   9
+    // Width:   16
+    // Count:   1
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:0001 LMIN:0 LMAX:800 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:16 RID:0 RCNT:1
+    // Locals:  USAG:00010030 UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  00010030
+    // Coll:    TouchPad Finger
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0x0001: Generic Desktop Page
+    uint16_t GD_TouchPadFingerX_1;                     // Usage 0x00010030: X, Value = 0 to 800
+    
+    // Field:   10
+    // Width:   16
+    // Count:   1
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:0001 LMIN:0 LMAX:480 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:16 RID:0 RCNT:1
+    // Locals:  USAG:00010031 UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  00010031
+    // Coll:    TouchPad Finger
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0x0001: Generic Desktop Page
+    uint16_t GD_TouchPadFingerY_1;                     // Usage 0x00010031: Y, Value = 0 to 480
+    
+    // Field:   11
+    // Width:   1
+    // Count:   1
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:FF60 LMIN:0 LMAX:480 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:1 RID:0 RCNT:1
+    // Locals:  USAG:FF600005 UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  FF600005
+    // Coll:    TouchPad
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0xFF60: Vendor-defined
+    // Collection: TouchPad
+    uint8_t  VEN_TouchPad0005 : 1;                     // Usage 0xFF600005: , Value = 0 to 480
+} HIDDigitizerForHangdogInputReport;
+
+
+//--------------------------------------------------------------------------------
+// Decoded Application Collection
+//--------------------------------------------------------------------------------
+
 #define HIDMouseDescriptor \
 0x05, 0x01,                  /* (GLOBAL) USAGE_PAGE         0x0001 Generic Desktop Page  */\
 0x09, 0x02,                  /* (LOCAL)  USAGE              0x00010002 Mouse (CA=Application Collection)  */\
@@ -2015,7 +2251,7 @@ typedef struct __attribute__((packed))
 0x0A, 0x38, 0x02,            /*     (LOCAL)  USAGE              0x000C0238 AC Pan (LC=Linear Control)      */\
 0x81, 0x06,                  /*     (MAIN)   INPUT              0x00000006 (1 field x 8 bits) 0=Data 1=Variable 1=Relative 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap      */\
 0xC0,                        /*   (MAIN)   END_COLLECTION     Physical   */\
-0xC0,                        /* (MAIN)   END_COLLECTION     Application */
+0xC0,                        /* (MAIN)   END_COLLECTION     Application */\
 
 
 //--------------------------------------------------------------------------------
@@ -2137,6 +2373,644 @@ typedef struct __attribute__((packed))
     // Collection: Biometric:HumanPresence
     uint8_t  SNS_BiometricHumanPresenceDataFieldHumanPresence; // Usage 0x002004B1: Data Field: Human Presence, Value = 0 to 1
 } HIDBiometricHumanPresenceAndProximityInputReport;
+
+
+//--------------------------------------------------------------------------------
+// Decoded Application Collection
+//--------------------------------------------------------------------------------
+
+//#define HIDAudioButtons \
+//0x05, 0x0B,                  /* (GLOBAL) USAGE_PAGE         0x000B Telephony Device Page  */\
+//0x09, 0x05,                  /* (LOCAL)  USAGE              0x000B0005 Headset (CL=Logical Collection)  */\
+//0xA1, 0x01,                  /* (MAIN)   COLLECTION         0x01 Application (Usage=0x000B0005: Page=Telephony Device Page, Usage=Headset, Type=CL) <-- Warning: USAGE type should be CA (Application) */\
+//0xC0,                        /* (MAIN)   END_COLLECTION     Application */\
+
+
+//--------------------------------------------------------------------------------
+// Decoded Application Collection
+//--------------------------------------------------------------------------------
+
+#define HIDAudioButtons \
+0x05, 0x0C,                  /* (GLOBAL) USAGE_PAGE         0x000C Consumer Device Page  */\
+0x09, 0x01,                  /* (LOCAL)  USAGE              0x000C0001 Consumer Control (CA=Application Collection)  */\
+0xA1, 0x01,                  /* (MAIN)   COLLECTION         0x01 Application (Usage=0x000C0001: Page=Consumer Device Page, Usage=Consumer Control, Type=CA) */\
+0x05, 0x0B,                  /*   (GLOBAL) USAGE_PAGE         0x000B Telephony Device Page    */\
+0x09, 0x21,                  /*   (LOCAL)  USAGE              0x000B0021 Flash (MC=Momentary Control)    */\
+0x05, 0x0C,                  /*   (GLOBAL) USAGE_PAGE         0x000C Consumer Device Page    */\
+0x09, 0xEA,                  /*   (LOCAL)  USAGE              0x000C00EA Volume Decrement (RTC=Re-trigger Control)    */\
+0x09, 0xE9,                  /*   (LOCAL)  USAGE              0x000C00E9 Volume Increment (RTC=Re-trigger Control)    */\
+0x06, 0x07, 0xFF,            /*   (GLOBAL) USAGE_PAGE         0xFF07 Vendor-defined    */\
+0x09, 0x01,                  /*   (LOCAL)  USAGE              0xFF070001     */\
+0x15, 0x00,                  /*   (GLOBAL) LOGICAL_MINIMUM    0x00 (0) <-- Redundant: LOGICAL_MINIMUM is already 0 <-- Info: Consider replacing 15 00 with 14   */\
+0x25, 0x01,                  /*   (GLOBAL) LOGICAL_MAXIMUM    0x01 (1)     */\
+0x95, 0x04,                  /*   (GLOBAL) REPORT_COUNT       0x04 (4) Number of fields     */\
+0x75, 0x01,                  /*   (GLOBAL) REPORT_SIZE        0x01 (1) Number of bits per field     */\
+0x81, 0x02,                  /*   (MAIN)   INPUT              0x00000002 (4 fields x 1 bit) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap    */\
+0x95, 0x05,                  /*   (GLOBAL) REPORT_COUNT       0x05 (5) Number of fields     */\
+0x81, 0x05,                  /*   (MAIN)   INPUT              0x00000005 (5 fields x 1 bit) 1=Constant 0=Array 1=Relative 0=Ignored 0=Ignored 0=PrefState 0=NoNull    */\
+0xC0,                        /* (MAIN)   END_COLLECTION     Application */\
+
+
+//--------------------------------------------------------------------------------
+// Vendor-defined HIDAudioButtonsInputReport (Device --> Host)
+//--------------------------------------------------------------------------------
+
+typedef struct __attribute__((packed))
+{
+    // No REPORT ID byte
+    
+    // Field:   1
+    // Width:   1
+    // Count:   4
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:FF07 LMIN:0 LMAX:1 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:1 RID:0 RCNT:4
+    // Locals:  USAG:FF070001 UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  000B0021 000C00EA 000C00E9 FF070001
+    // Coll:    ConsumerControl
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0xFF07: Vendor-defined
+    // Collection: ConsumerControl
+    uint8_t  TEL_ConsumerControlFlash : 1;             // Usage 0x000B0021: Flash, Value = 0 to 1
+    uint8_t  CD_ConsumerControlVolumeDecrement : 1;    // Usage 0x000C00EA: Volume Decrement, Value = 0 to 1
+    uint8_t  CD_ConsumerControlVolumeIncrement : 1;    // Usage 0x000C00E9: Volume Increment, Value = 0 to 1
+    uint8_t  VEN_ConsumerControl0001 : 1;              // Usage 0xFF070001: , Value = 0 to 1
+    
+    // Field:   2
+    // Width:   1
+    // Count:   5
+    // Flags:   00000005: 1=Constant 0=Array 1=Relative 0=Ignored 0=Ignored 0=PrefState 0=NoNull
+    // Globals: PAGE:FF07 LMIN:0 LMAX:1 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:1 RID:0 RCNT:5
+    // Locals:  USAG:0 UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:
+    // Coll:    ConsumerControl
+    // Access:  Read/Only
+    // Type:    Array
+    // Page 0xFF07: Vendor-defined
+    uint8_t  : 1;                                      // Pad
+    uint8_t  : 1;                                      // Pad
+    uint8_t  : 1;                                      // Pad
+    uint8_t  : 1;                                      // Pad
+    uint8_t  : 1;                                      // Pad
+} HIDAudioButtonsInputReport;
+
+
+//--------------------------------------------------------------------------------
+// Decoded Application Collection
+//--------------------------------------------------------------------------------
+
+#define HIDCarplaySelectButton \
+0x05, 0x0C,                  /* (GLOBAL) USAGE_PAGE         0x000C Consumer Device Page  */\
+0x09, 0x01,                  /* (LOCAL)  USAGE              0x000C0001 Consumer Control (CA=Application Collection)  */\
+0xA1, 0x01,                  /* (MAIN)   COLLECTION         0x01 Application (Usage=0x000C0001: Page=Consumer Device Page, Usage=Consumer Control, Type=CA) */\
+0x05, 0x09,                  /*   (GLOBAL) USAGE_PAGE         0x0009 Button Page    */\
+0x09, 0x01,                  /*   (LOCAL)  USAGE              0x00090001 Button 1 Primary/trigger (MULTI=Selector, On/Off, Momentary, or One Shot)    */\
+0x15, 0x00,                  /*   (GLOBAL) LOGICAL_MINIMUM    0x00 (0) <-- Redundant: LOGICAL_MINIMUM is already 0 <-- Info: Consider replacing 15 00 with 14   */\
+0x25, 0x01,                  /*   (GLOBAL) LOGICAL_MAXIMUM    0x01 (1)     */\
+0x75, 0x01,                  /*   (GLOBAL) REPORT_SIZE        0x01 (1) Number of bits per field     */\
+0x95, 0x01,                  /*   (GLOBAL) REPORT_COUNT       0x01 (1) Number of fields     */\
+0x81, 0x02,                  /*   (MAIN)   INPUT              0x00000002 (1 field x 1 bit) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap    */\
+0x05, 0x0C,                  /*   (GLOBAL) USAGE_PAGE         0x000C Consumer Device Page    */\
+0x0A, 0x24, 0x02,            /*   (LOCAL)  USAGE              0x000C0224 AC Back (Sel=Selector)    */\
+0x0A, 0x23, 0x02,            /*   (LOCAL)  USAGE              0x000C0223 AC Home (Sel=Selector)    */\
+0x95, 0x01,                  /*   (GLOBAL) REPORT_COUNT       0x01 (1) Number of fields <-- Redundant: REPORT_COUNT is already 1    */\
+0x81, 0x02,                  /*   (MAIN)   INPUT              0x00000002 (1 field x 1 bit) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap    */\
+0x95, 0x05,                  /*   (GLOBAL) REPORT_COUNT       0x05 (5) Number of fields     */\
+0x81, 0x01,                  /*   (MAIN)   INPUT              0x00000001 (5 fields x 1 bit) 1=Constant 0=Array 0=Absolute 0=Ignored 0=Ignored 0=PrefState 0=NoNull    */\
+0xC0,                        /* (MAIN)   END_COLLECTION     Application */\
+
+
+//--------------------------------------------------------------------------------
+// Button Page HIDCarplaySelectButtonInputReport (Device --> Host)
+//--------------------------------------------------------------------------------
+
+typedef struct __attribute__((packed))
+{
+    // No REPORT ID byte
+    
+    // Field:   1
+    // Width:   1
+    // Count:   1
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:0009 LMIN:0 LMAX:1 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:1 RID:0 RCNT:1
+    // Locals:  USAG:00090001 UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  00090001
+    // Coll:    ConsumerControl
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0x0009: Button Page
+    // Collection: ConsumerControl
+    uint8_t  BTN_ConsumerControlButton1 : 1;           // Usage 0x00090001: Button 1 Primary/trigger, Value = 0 to 1
+    
+    // Field:   2
+    // Width:   1
+    // Count:   1
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:000C LMIN:0 LMAX:1 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:1 RID:0 RCNT:1
+    // Locals:  USAG:000C0223 UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  000C0224 000C0223
+    // Coll:    ConsumerControl
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0x000C: Consumer Device Page
+    uint8_t  CD_ConsumerControlAcBack : 1;             // Usage 0x000C0224: AC Back, Value = 0 to 1
+    // Usage 0x000C0223 AC Home (Sel=Selector) Value = 0 to 1 <-- Ignored: REPORT_COUNT (1) is too small
+    
+    // Field:   3
+    // Width:   1
+    // Count:   5
+    // Flags:   00000001: 1=Constant 0=Array 0=Absolute 0=Ignored 0=Ignored 0=PrefState 0=NoNull
+    // Globals: PAGE:000C LMIN:0 LMAX:1 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:1 RID:0 RCNT:5
+    // Locals:  USAG:0 UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:
+    // Coll:    ConsumerControl
+    // Access:  Read/Only
+    // Type:    Array
+    // Page 0x000C: Consumer Device Page
+    uint8_t  : 1;                                      // Pad
+    uint8_t  : 1;                                      // Pad
+    uint8_t  : 1;                                      // Pad
+    uint8_t  : 1;                                      // Pad
+    uint8_t  : 1;                                      // Pad
+} HIDCarplaySelectButtonInputReport;
+
+
+//--------------------------------------------------------------------------------
+// Decoded Application Collection
+//--------------------------------------------------------------------------------
+
+#define HIDAccel \
+0x05, 0x20,                  /* (GLOBAL) USAGE_PAGE         0x0020 Sensor Device Page  */\
+0x09, 0x73,                  /* (LOCAL)  USAGE              0x00200073 Motion: Accelerometer 3D (CACP=Application or Physical Collection)  */\
+0xA1, 0x01,                  /* (MAIN)   COLLECTION         0x01 Application (Usage=0x00200073: Page=Sensor Device Page, Usage=Motion: Accelerometer 3D, Type=CACP) */\
+0x85, 0x01,                  /*   (GLOBAL) REPORT_ID          0x01 (1)    */\
+0x46, 0xFF, 0x7F,            /*   (GLOBAL) PHYSICAL_MAXIMUM   0x7FFF (32767)     */\
+0x36, 0x00, 0x80,            /*   (GLOBAL) PHYSICAL_MINIMUM   0x8000 (-32768)     */\
+0x26, 0xFF, 0x7F,            /*   (GLOBAL) LOGICAL_MAXIMUM    0x7FFF (32767)     */\
+0x16, 0x00, 0x80,            /*   (GLOBAL) LOGICAL_MINIMUM    0x8000 (-32768)     */\
+0x55, 0x0D,                  /*   (GLOBAL) UNIT_EXPONENT      0x0D (Unit Value x 10⁻³)    */\
+0x05, 0x20,                  /*   (GLOBAL) USAGE_PAGE         0x0020 Sensor Device Page <-- Redundant: USAGE_PAGE is already 0x0020   */\
+0x0A, 0x53, 0x04,            /*   (LOCAL)  USAGE              0x00200453 Data Field: Acceleration Axis X (SV=Static Value)    */\
+0x75, 0x10,                  /*   (GLOBAL) REPORT_SIZE        0x10 (16) Number of bits per field     */\
+0x95, 0x01,                  /*   (GLOBAL) REPORT_COUNT       0x01 (1) Number of fields     */\
+0x81, 0x02,                  /*   (MAIN)   INPUT              0x00000002 (1 field x 16 bits) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap    */\
+0x0A, 0x54, 0x04,            /*   (LOCAL)  USAGE              0x00200454 Data Field: Acceleration Axis Y (SV=Static Value)    */\
+0x81, 0x02,                  /*   (MAIN)   INPUT              0x00000002 (1 field x 16 bits) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap    */\
+0x05, 0x20,                  /*   (GLOBAL) USAGE_PAGE         0x0020 Sensor Device Page <-- Redundant: USAGE_PAGE is already 0x0020   */\
+0x0A, 0x55, 0x04,            /*   (LOCAL)  USAGE              0x00200455 Data Field: Acceleration Axis Z (SV=Static Value)    */\
+0x81, 0x02,                  /*   (MAIN)   INPUT              0x00000002 (1 field x 16 bits) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap    */\
+0x06, 0x0C, 0xFF,            /*   (GLOBAL) USAGE_PAGE         0xFF0C     */\
+0x09, 0x09,                  /*   (LOCAL)  USAGE              0xFF0C0009     */\
+0x24,                        /*   (GLOBAL) LOGICAL_MAXIMUM    (0)     */\
+0x14,                        /*   (GLOBAL) LOGICAL_MINIMUM    (0)     */\
+0x45, 0x02,                  /*   (GLOBAL) PHYSICAL_MAXIMUM   0x02 (2)     */\
+0x34,                        /*   (GLOBAL) PHYSICAL_MINIMUM   (0)     */\
+0x75, 0x02,                  /*   (GLOBAL) REPORT_SIZE        0x02 (2) Number of bits per field     */\
+0x81, 0x02,                  /*   (MAIN)   INPUT              0x00000002 (1 field x 2 bits) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap    */\
+0x55, 0x00,                  /*   (GLOBAL) UNIT_EXPONENT      0x00 (Unit Value x 10⁰)    */\
+0x45, 0x01,                  /*   (GLOBAL) PHYSICAL_MAXIMUM   0x01 (1)     */\
+0x34,                        /*   (GLOBAL) PHYSICAL_MINIMUM   (0) <-- Redundant: PHYSICAL_MINIMUM is already 0    */\
+0x09, 0x0A,                  /*   (LOCAL)  USAGE              0xFF0C000A     */\
+0x75, 0x01,                  /*   (GLOBAL) REPORT_SIZE        0x01 (1) Number of bits per field     */\
+0x81, 0x02,                  /*   (MAIN)   INPUT              0x00000002 (1 field x 1 bit) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap    */\
+0x95, 0x01,                  /*   (GLOBAL) REPORT_COUNT       0x01 (1) Number of fields <-- Redundant: REPORT_COUNT is already 1    */\
+0x75, 0x05,                  /*   (GLOBAL) REPORT_SIZE        0x05 (5) Number of bits per field     */\
+0x81, 0x01,                  /*   (MAIN)   INPUT              0x00000001 (1 field x 5 bits) 1=Constant 0=Array 0=Absolute 0=Ignored 0=Ignored 0=PrefState 0=NoNull    */\
+0x09, 0x0B,                  /*   (LOCAL)  USAGE              0xFF0C000B     */\
+0x44,                        /*   (GLOBAL) PHYSICAL_MAXIMUM   (0)     */\
+0x34,                        /*   (GLOBAL) PHYSICAL_MINIMUM   (0) <-- Redundant: PHYSICAL_MINIMUM is already 0    */\
+0x75, 0x10,                  /*   (GLOBAL) REPORT_SIZE        0x10 (16) Number of bits per field     */\
+0x81, 0x02,                  /*   (MAIN)   INPUT              0x00000002 (1 field x 16 bits) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap    */\
+0x06, 0x00, 0xFF,            /*   (GLOBAL) USAGE_PAGE         0xFF00 Vendor-defined    */\
+0x09, 0x23,                  /*   (LOCAL)  USAGE              0xFF000023     */\
+0xA1, 0x00,                  /*   (MAIN)   COLLECTION         0x00 Physical (Usage=0xFF000023: Page=Vendor-defined, Usage=, Type=)   */\
+0x09, 0x0C,                  /*     (LOCAL)  USAGE              0xFF00000C       */\
+0x06, 0x0C, 0xFF,            /*     (GLOBAL) USAGE_PAGE         0xFF0C       */\
+0x75, 0x40,                  /*     (GLOBAL) REPORT_SIZE        0x40 (64) Number of bits per field       */\
+0x81, 0x02,                  /*     (MAIN)   INPUT              0x00000002 (1 field x 64 bits) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap      */\
+0xC0,                        /*   (MAIN)   END_COLLECTION     Physical   */\
+0x05, 0x20,                  /*   (GLOBAL) USAGE_PAGE         0x0020 Sensor Device Page    */\
+0x0A, 0x0E, 0x03,            /*   (LOCAL)  USAGE              0x0020030E Property: Report Interval (DV=Dynamic Value)    */\
+0x95, 0x01,                  /*   (GLOBAL) REPORT_COUNT       0x01 (1) Number of fields <-- Redundant: REPORT_COUNT is already 1    */\
+0x75, 0x20,                  /*   (GLOBAL) REPORT_SIZE        0x20 (32) Number of bits per field     */\
+0xB1, 0x02,                  /*   (MAIN)   FEATURE            0x00000002 (1 field x 32 bits) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap    */\
+0x85, 0x02,                  /*   (GLOBAL) REPORT_ID          0x02 (2)    */\
+0x0A, 0x1B, 0x03,            /*   (LOCAL)  USAGE              0x0020031B Property: Report Latency (DV=Dynamic Value)    */\
+0x95, 0x01,                  /*   (GLOBAL) REPORT_COUNT       0x01 (1) Number of fields <-- Redundant: REPORT_COUNT is already 1    */\
+0x75, 0x20,                  /*   (GLOBAL) REPORT_SIZE        0x20 (32) Number of bits per field <-- Redundant: REPORT_SIZE is already 32    */\
+0xB1, 0x02,                  /*   (MAIN)   FEATURE            0x00000002 (1 field x 32 bits) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap    */\
+0xC0,                        /* (MAIN)   END_COLLECTION     Application */\
+
+
+//--------------------------------------------------------------------------------
+// Sensor Device Page HIDAccelFeatureReport 01 (Device <-> Host)
+//--------------------------------------------------------------------------------
+
+typedef struct __attribute__((packed))
+{
+    uint8_t  reportId;                                 // Report ID = 0x01 (1)
+    
+    // Field:   1
+    // Width:   32
+    // Count:   1
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:0020 LMIN:0 LMAX:0 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:32 RID:01 RCNT:1
+    // Locals:  USAG:0020030E UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  0020030E
+    // Coll:
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0x0020: Sensor Device Page
+    uint32_t SNS_VendorDefinedPropertyReportInterval;  // Usage 0x0020030E: Property: Report Interval, Value = 0 to 0
+} HIDAccelFeatureReport01;
+
+
+//--------------------------------------------------------------------------------
+// Sensor Device Page HIDAccelFeatureReport 02 (Device <-> Host)
+//--------------------------------------------------------------------------------
+
+typedef struct __attribute__((packed))
+{
+    uint8_t  reportId;                                 // Report ID = 0x02 (2)
+    
+    // Field:   2
+    // Width:   32
+    // Count:   1
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:0020 LMIN:0 LMAX:0 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:32 RID:02 RCNT:1
+    // Locals:  USAG:0020031B UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  0020031B
+    // Coll:
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0x0020: Sensor Device Page
+    uint32_t SNS_VendorDefinedPropertyReportLatency;   // Usage 0x0020031B: Property: Report Latency, Value = 0 to 0
+} HIDAccelFeatureReport02;
+
+
+//--------------------------------------------------------------------------------
+// Sensor Device Page HIDAccelInputReport 01 (Device --> Host)
+//--------------------------------------------------------------------------------
+
+typedef struct __attribute__((packed))
+{
+    uint8_t  reportId;                                 // Report ID = 0x01 (1)
+    
+    // Field:   1
+    // Width:   16
+    // Count:   1
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:0020 LMIN:-32768 LMAX:32767 PMIN:-32768 PMAX:32767 UEXP:-3 UNIT:0 RSIZ:16 RID:01 RCNT:1
+    // Locals:  USAG:00200453 UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  00200453
+    // Coll:    Motion:Accelerometer3D
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0x0020: Sensor Device Page
+    // Collection: Motion:Accelerometer3D
+    int16_t  SNS_MotionAccelerometer3DDataFieldAccelerationAxisX; // Usage 0x00200453: Data Field: Acceleration Axis X, Value = -32768 to 32767, Physical = ((Value + 32768) - 32768)
+    
+    // Field:   2
+    // Width:   16
+    // Count:   1
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:0020 LMIN:-32768 LMAX:32767 PMIN:-32768 PMAX:32767 UEXP:-3 UNIT:0 RSIZ:16 RID:01 RCNT:1
+    // Locals:  USAG:00200454 UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  00200454
+    // Coll:    Motion:Accelerometer3D
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0x0020: Sensor Device Page
+    int16_t  SNS_MotionAccelerometer3DDataFieldAccelerationAxisY; // Usage 0x00200454: Data Field: Acceleration Axis Y, Value = -32768 to 32767, Physical = ((Value + 32768) - 32768)
+    
+    // Field:   3
+    // Width:   16
+    // Count:   1
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:0020 LMIN:-32768 LMAX:32767 PMIN:-32768 PMAX:32767 UEXP:-3 UNIT:0 RSIZ:16 RID:01 RCNT:1
+    // Locals:  USAG:00200455 UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  00200455
+    // Coll:    Motion:Accelerometer3D
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0x0020: Sensor Device Page
+    int16_t  SNS_MotionAccelerometer3DDataFieldAccelerationAxisZ; // Usage 0x00200455: Data Field: Acceleration Axis Z, Value = -32768 to 32767, Physical = ((Value + 32768) - 32768)
+    
+    // Field:   4
+    // Width:   2
+    // Count:   1
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:FF0C LMIN:0 LMAX:0 PMIN:0 PMAX:2 UEXP:-3 UNIT:0 RSIZ:2 RID:01 RCNT:1
+    // Locals:  USAG:FF0C0009 UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  FF0C0009
+    // Coll:    Motion:Accelerometer3D
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0xFF0C:
+    uint8_t  MotionAccelerometer3D0009 : 2;            // Usage 0xFF0C0009: , Value = 0 to 0, Physical = Value / 0
+    
+    // Field:   5
+    // Width:   1
+    // Count:   1
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:FF0C LMIN:0 LMAX:0 PMIN:0 PMAX:1 UEXP:0 UNIT:0 RSIZ:1 RID:01 RCNT:1
+    // Locals:  USAG:FF0C000A UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  FF0C000A
+    // Coll:    Motion:Accelerometer3D
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0xFF0C:
+    uint8_t  MotionAccelerometer3D000A : 1;            // Usage 0xFF0C000A: , Value = 0 to 0, Physical = Value / 0
+    
+    // Field:   6
+    // Width:   5
+    // Count:   1
+    // Flags:   00000001: 1=Constant 0=Array 0=Absolute 0=Ignored 0=Ignored 0=PrefState 0=NoNull
+    // Globals: PAGE:FF0C LMIN:0 LMAX:0 PMIN:0 PMAX:1 UEXP:0 UNIT:0 RSIZ:5 RID:01 RCNT:1
+    // Locals:  USAG:0 UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:
+    // Coll:    Motion:Accelerometer3D
+    // Access:  Read/Only
+    // Type:    Array
+    // Page 0xFF0C:
+    uint8_t  : 5;                                      // Pad
+    
+    // Field:   7
+    // Width:   16
+    // Count:   1
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:FF0C LMIN:0 LMAX:0 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:16 RID:01 RCNT:1
+    // Locals:  USAG:FF0C000B UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  FF0C000B
+    // Coll:    Motion:Accelerometer3D
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0xFF0C:
+    uint16_t MotionAccelerometer3D000B;                // Usage 0xFF0C000B: , Value = 0 to 0
+    
+    // Field:   8
+    // Width:   64
+    // Count:   1
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:FF0C LMIN:0 LMAX:0 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:64 RID:01 RCNT:1
+    // Locals:  USAG:FF00000C UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  FF00000C
+    // Coll:    Motion:Accelerometer3D
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0xFF0C:
+    uint64_t VEN_MotionAccelerometer3D000C;            // Usage 0xFF00000C: , Value = 0 to 0
+} HIDAccelInputReport01;
+
+
+
+//--------------------------------------------------------------------------------
+// Decoded Application Collection
+//--------------------------------------------------------------------------------
+
+#define HIDClef \
+0x06, 0x00, 0xFF,            /* (GLOBAL) USAGE_PAGE         0xFF00 Vendor-defined  */\
+0x09, 0x30,                  /* (LOCAL)  USAGE              0xFF000030   */\
+0xA1, 0x01,                  /* (MAIN)   COLLECTION         0x01 Application (Usage=0xFF000030: Page=Vendor-defined, Usage=, Type=) */\
+0x06, 0x00, 0xFF,            /*   (GLOBAL) USAGE_PAGE         0xFF00 Vendor-defined <-- Redundant: USAGE_PAGE is already 0xFF00   */\
+0x09, 0x23,                  /*   (LOCAL)  USAGE              0xFF000023     */\
+0xA1, 0x00,                  /*   (MAIN)   COLLECTION         0x00 Physical (Usage=0xFF000023: Page=Vendor-defined, Usage=, Type=)   */\
+0x85, 0x01,                  /*     (GLOBAL) REPORT_ID          0x01 (1)      */\
+0x06, 0x14, 0xFF,            /*     (GLOBAL) USAGE_PAGE         0xFF14 Vendor-defined      */\
+0x09, 0x01,                  /*     (LOCAL)  USAGE              0xFF140001       */\
+0x95, 0x01,                  /*     (GLOBAL) REPORT_COUNT       0x01 (1) Number of fields       */\
+0x75, 0x30,                  /*     (GLOBAL) REPORT_SIZE        0x30 (48) Number of bits per field       */\
+0x81, 0x02,                  /*     (MAIN)   INPUT              0x00000002 (1 field x 48 bits) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap      */\
+0x06, 0x00, 0xFF,            /*     (GLOBAL) USAGE_PAGE         0xFF00 Vendor-defined      */\
+0x09, 0x23,                  /*     (LOCAL)  USAGE              0xFF000023       */\
+0xA1, 0x00,                  /*     (MAIN)   COLLECTION         0x00 Physical (Usage=0xFF000023: Page=Vendor-defined, Usage=, Type=)     */\
+0x09, 0x0C,                  /*       (LOCAL)  USAGE              0xFF00000C         */\
+0x06, 0x0C, 0xFF,            /*       (GLOBAL) USAGE_PAGE         0xFF0C         */\
+0x75, 0x40,                  /*       (GLOBAL) REPORT_SIZE        0x40 (64) Number of bits per field         */\
+0x81, 0x02,                  /*       (MAIN)   INPUT              0x00000002 (1 field x 64 bits) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap        */\
+0xC0,                        /*     (MAIN)   END_COLLECTION     Physical     */\
+0xC0,                        /*   (MAIN)   END_COLLECTION     Physical   */\
+0x06, 0x00, 0xFF,            /*   (GLOBAL) USAGE_PAGE         0xFF00 Vendor-defined    */\
+0x09, 0x23,                  /*   (LOCAL)  USAGE              0xFF000023     */\
+0xA1, 0x00,                  /*   (MAIN)   COLLECTION         0x00 Physical (Usage=0xFF000023: Page=Vendor-defined, Usage=, Type=)   */\
+0x85, 0x02,                  /*     (GLOBAL) REPORT_ID          0x02 (2)      */\
+0x06, 0x14, 0xFF,            /*     (GLOBAL) USAGE_PAGE         0xFF14 Vendor-defined      */\
+0x09, 0x02,                  /*     (LOCAL)  USAGE              0xFF140002       */\
+0x95, 0x01,                  /*     (GLOBAL) REPORT_COUNT       0x01 (1) Number of fields <-- Redundant: REPORT_COUNT is already 1      */\
+0x75, 0x18,                  /*     (GLOBAL) REPORT_SIZE        0x18 (24) Number of bits per field       */\
+0x81, 0x02,                  /*     (MAIN)   INPUT              0x00000002 (1 field x 24 bits) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap      */\
+0x06, 0x00, 0xFF,            /*     (GLOBAL) USAGE_PAGE         0xFF00 Vendor-defined      */\
+0x09, 0x23,                  /*     (LOCAL)  USAGE              0xFF000023       */\
+0xA1, 0x00,                  /*     (MAIN)   COLLECTION         0x00 Physical (Usage=0xFF000023: Page=Vendor-defined, Usage=, Type=)     */\
+0x09, 0x0C,                  /*       (LOCAL)  USAGE              0xFF00000C         */\
+0x06, 0x0C, 0xFF,            /*       (GLOBAL) USAGE_PAGE         0xFF0C         */\
+0x75, 0x40,                  /*       (GLOBAL) REPORT_SIZE        0x40 (64) Number of bits per field         */\
+0x81, 0x02,                  /*       (MAIN)   INPUT              0x00000002 (1 field x 64 bits) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap        */\
+0xC0,                        /*     (MAIN)   END_COLLECTION     Physical     */\
+0xC0,                        /*   (MAIN)   END_COLLECTION     Physical   */\
+0x05, 0x20,                  /*   (GLOBAL) USAGE_PAGE         0x0020 Sensor Device Page    */\
+0x0A, 0x0E, 0x03,            /*   (LOCAL)  USAGE              0x0020030E Property: Report Interval (DV=Dynamic Value)    */\
+0x85, 0x01,                  /*   (GLOBAL) REPORT_ID          0x01 (1)    */\
+0x17, 0x00, 0x00, 0x00, 0x00, /*   (GLOBAL) LOGICAL_MINIMUM    0x00000000 (0) <-- Redundant: LOGICAL_MINIMUM is already 0 <-- Info: Consider replacing 17 00000000 with 14   */\
+0x27, 0x00, 0x00, 0x00, 0x70, /*   (GLOBAL) LOGICAL_MAXIMUM    0x70000000 (1879048192)     */\
+0x95, 0x01,                  /*   (GLOBAL) REPORT_COUNT       0x01 (1) Number of fields <-- Redundant: REPORT_COUNT is already 1    */\
+0x75, 0x20,                  /*   (GLOBAL) REPORT_SIZE        0x20 (32) Number of bits per field     */\
+0xB1, 0x02,                  /*   (MAIN)   FEATURE            0x00000002 (1 field x 32 bits) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap    */\
+0xC0,                        /* (MAIN)   END_COLLECTION     Application */\
+
+
+//--------------------------------------------------------------------------------
+// Sensor Device Page HIDClefFeatureReport 01 (Device <-> Host)
+//--------------------------------------------------------------------------------
+
+typedef struct __attribute__((packed))
+{
+    uint8_t  reportId;                                 // Report ID = 0x01 (1)
+    
+    // Field:   1
+    // Width:   32
+    // Count:   1
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:0020 LMIN:0 LMAX:1879048192 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:32 RID:01 RCNT:1
+    // Locals:  USAG:0020030E UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  0020030E
+    // Coll:
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0x0020: Sensor Device Page
+    uint32_t SNS_VendorDefinedPropertyReportInterval;  // Usage 0x0020030E: Property: Report Interval, Value = 0 to 1879048192
+} HIDClefFeatureReport01;
+
+
+//--------------------------------------------------------------------------------
+// Vendor-defined HIDClefInputReport 01 (Device --> Host)
+//--------------------------------------------------------------------------------
+
+typedef struct __attribute__((packed))
+{
+    uint8_t  reportId;                                 // Report ID = 0x01 (1)
+    
+    // Field:   1
+    // Width:   48
+    // Count:   1
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:FF14 LMIN:0 LMAX:0 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:48 RID:01 RCNT:1
+    // Locals:  USAG:FF140001 UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  FF140001
+    // Coll:
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0xFF14: Vendor-defined
+    uint64_t VEN_VendorDefined0001 : 48;               // Usage 0xFF140001: , Value = 0 to 0
+    
+    // Field:   2
+    // Width:   64
+    // Count:   1
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:FF0C LMIN:0 LMAX:0 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:64 RID:01 RCNT:1
+    // Locals:  USAG:FF00000C UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  FF00000C
+    // Coll:
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0xFF0C:
+    uint64_t VEN_VendorDefined000C;                    // Usage 0xFF00000C: , Value = 0 to 0
+} HIDClefInputReport01;
+
+
+//--------------------------------------------------------------------------------
+// Vendor-defined HIDClefInputReport 02 (Device --> Host)
+//--------------------------------------------------------------------------------
+
+typedef struct __attribute__((packed))
+{
+    uint8_t  reportId;                                 // Report ID = 0x02 (2)
+    
+    // Field:   3
+    // Width:   24
+    // Count:   1
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:FF14 LMIN:0 LMAX:0 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:24 RID:02 RCNT:1
+    // Locals:  USAG:FF140002 UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  FF140002
+    // Coll:
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0xFF14: Vendor-defined
+    uint32_t VEN_VendorDefined0002 : 24;               // Usage 0xFF140002: , Value = 0 to 0
+    
+    // Field:   4
+    // Width:   64
+    // Count:   1
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:FF0C LMIN:0 LMAX:0 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:64 RID:02 RCNT:1
+    // Locals:  USAG:FF00000C UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  FF00000C
+    // Coll:
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0xFF0C:
+    uint64_t VEN_VendorDefined000C;                    // Usage 0xFF00000C: , Value = 0 to 0
+} HIDClefInputReport02;
+
+
+///--------------------------------------------------------------------------------
+// Decoded Application Collection
+//--------------------------------------------------------------------------------
+
+#define HIDOrientation \
+0x05, 0x20,                  /* (GLOBAL) USAGE_PAGE         0x0020 Sensor Device Page  */\
+0x09, 0x8A,                  /* (LOCAL)  USAGE              0x0020008A Orientation: Device Orientation (CACP=Application or Physical Collection)  */\
+0xA1, 0x01,                  /* (MAIN)   COLLECTION         0x01 Application (Usage=0x0020008A: Page=Sensor Device Page, Usage=Orientation: Device Orientation, Type=CACP) */\
+0x06, 0x0C, 0xFF,            /*   (GLOBAL) USAGE_PAGE         0xFF0C     */\
+0x19, 0x64,                  /*   (LOCAL)  USAGE_MINIMUM      0xFF0C0064     */\
+0x2A, 0x6B, 0x00,            /*   (LOCAL)  USAGE_MAXIMUM      0xFF0C006B     */\
+0x15, 0x01,                  /*   (GLOBAL) LOGICAL_MINIMUM    0x01 (1)     */\
+0x25, 0x08,                  /*   (GLOBAL) LOGICAL_MAXIMUM    0x08 (8)     */\
+0x95, 0x01,                  /*   (GLOBAL) REPORT_COUNT       0x01 (1) Number of fields     */\
+0x75, 0x08,                  /*   (GLOBAL) REPORT_SIZE        0x08 (8) Number of bits per field     */\
+0x81, 0x00,                  /*   (MAIN)   INPUT              0x00000000 (1 field x 8 bits) 0=Data 0=Array 0=Absolute 0=Ignored 0=Ignored 0=PrefState 0=NoNull    */\
+0xC0,                        /* (MAIN)   END_COLLECTION     Application */\
+
+
+//--------------------------------------------------------------------------------
+//  HIDOrientationInputReport (Device --> Host)
+//--------------------------------------------------------------------------------
+
+typedef struct __attribute__((packed))
+{
+    // No REPORT ID byte
+    
+    // Field:   1
+    // Width:   8
+    // Count:   1
+    // Flags:   00000000: 0=Data 0=Array 0=Absolute 0=Ignored 0=Ignored 0=PrefState 0=NoNull
+    // Globals: PAGE:FF0C LMIN:1 LMAX:8 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:8 RID:0 RCNT:1
+    // Locals:  USAG:0 UMIN:FF0C0064 UMAX:FF0C006B DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  FF0C0064 FF0C0065 FF0C0066 FF0C0067 FF0C0068 FF0C0069 FF0C006A FF0C006B
+    // Coll:    Orientation:DeviceOrientation
+    // Access:  Read/Write
+    // Type:    Array
+    // Page 0xFF0C:
+    // Collection: Orientation:DeviceOrientation
+    uint8_t  OrientationDeviceOrientation;             // Value = 1 to 8
+} HIDOrientationInputReport;
+
+//--------------------------------------------------------------------------------
+// Decoded Application Collection
+//--------------------------------------------------------------------------------
+
+#define HIDCameraDescriptor \
+0x05, 0x90,                  /*   (GLOBAL) USAGE_PAGE         0x0090 Camera Control Page    */\
+0xA1, 0x01,                  /* (MAIN)   COLLECTION         0x01 Application (Usage=0x0: Page=, Usage=, Type=) <-- Warning: USAGE type should be CA (Application) */\
+0x19, 0x20,                  /*   (LOCAL)  USAGE_MINIMUM      0x00900020 Camera Auto Focus (OSC=One Shot Control)    */\
+0x29, 0x21,                  /*   (LOCAL)  USAGE_MAXIMUM      0x00900021 Camera Shutter (OSC=One Shot Control)    */\
+0x15, 0x00,                  /*   (GLOBAL) LOGICAL_MINIMUM    0x00 (0) <-- Redundant: LOGICAL_MINIMUM is already 0 <-- Info: Consider replacing 15 00 with 14   */\
+0x25, 0x01,                  /*   (GLOBAL) LOGICAL_MAXIMUM    0x01 (1)     */\
+0x75, 0x01,                  /*   (GLOBAL) REPORT_SIZE        0x01 (1) Number of bits per field     */\
+0x95, 0x02,                  /*   (GLOBAL) REPORT_COUNT       0x02 (2) Number of fields     */\
+0x81, 0x02,                  /*   (MAIN)   INPUT              0x00000002 (2 fields x 1 bit) 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap    */\
+0x75, 0x06,                  /*   (GLOBAL) REPORT_SIZE        0x06 (6) Number of bits per field     */\
+0x95, 0x01,                  /*   (GLOBAL) REPORT_COUNT       0x01 (1) Number of fields     */\
+0x81, 0x01,                  /*   (MAIN)   INPUT              0x00000001 (1 field x 6 bits) 1=Constant 0=Array 0=Absolute 0=Ignored 0=Ignored 0=PrefState 0=NoNull    */\
+0xC0,                        /* (MAIN)   END_COLLECTION     Application */\
+
+
+//--------------------------------------------------------------------------------
+// Camera Control Page HIDCameraDescriptorInputReport (Device --> Host)
+//--------------------------------------------------------------------------------
+
+typedef struct __attribute__((packed))
+{
+    // No REPORT ID byte
+    
+    // Field:   1
+    // Width:   1
+    // Count:   2
+    // Flags:   00000002: 0=Data 1=Variable 0=Absolute 0=NoWrap 0=Linear 0=PrefState 0=NoNull 0=NonVolatile 0=Bitmap
+    // Globals: PAGE:0090 LMIN:0 LMAX:1 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:1 RID:0 RCNT:2
+    // Locals:  USAG:0 UMIN:00900020 UMAX:00900021 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:  00900020 00900021
+    // Coll:
+    // Access:  Read/Write
+    // Type:    Variable
+    // Page 0x0090: Camera Control Page
+    uint8_t  CAM_VendorDefinedCameraAutoFocus : 1;     // Usage 0x00900020: Camera Auto Focus, Value = 0 to 1
+    uint8_t  CAM_VendorDefinedCameraShutter : 1;       // Usage 0x00900021: Camera Shutter, Value = 0 to 1
+    
+    // Field:   2
+    // Width:   6
+    // Count:   1
+    // Flags:   00000001: 1=Constant 0=Array 0=Absolute 0=Ignored 0=Ignored 0=PrefState 0=NoNull
+    // Globals: PAGE:0090 LMIN:0 LMAX:1 PMIN:0 PMAX:0 UEXP:0 UNIT:0 RSIZ:6 RID:0 RCNT:1
+    // Locals:  USAG:0 UMIN:0 UMAX:0 DIDX:0 DMIN:0 DMAX:0 SIDX:0 SMIN:0 SMAX:0
+    // Usages:
+    // Coll:
+    // Access:  Read/Only
+    // Type:    Array
+    // Page 0x0090: Camera Control Page
+    uint8_t  : 6;                                      // Pad
+} HIDCameraDescriptorInputReport;
 
 #endif /* IOHIDUnitTestDescriptors_h */
 

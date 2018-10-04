@@ -212,8 +212,11 @@ bool IOHIDEventService::start ( IOService * provider )
     OSNumber    *number       = NULL;
     OSString    *string       = NULL;
     OSBoolean   *boolean      = NULL;
+    IOHIDDevice *device       = NULL;
 
     _provider = provider;
+    
+    device = OSDynamicCast(IOHIDDevice, provider->getProvider());
 
     if ( !super::start(provider) )
         return false;
@@ -297,6 +300,13 @@ bool IOHIDEventService::start ( IOService * provider )
 #endif
     
     parseSupportedElements (getReportElements(), bootProtocol);
+    
+    if (supportsHeadset(getReportElements())) {
+        setProperty(kIOHIDDeviceTypeHintKey, kIOHIDDeviceTypeHeadsetKey);
+        if (device) {
+            device->setProperty(kIOHIDDeviceTypeHintKey, kIOHIDDeviceTypeHeadsetKey);
+        }
+    }
 
     _readyForInputReports = true;
 
@@ -478,6 +488,90 @@ void IOHIDEventService::calculateStandardType()
         OSSafeReleaseNULL(obj);
     }
 #endif /* TARGET_OS_EMBEDDED */
+}
+
+//====================================================================================================
+// IOHIDEventService::supportsHeadset
+//====================================================================================================
+bool IOHIDEventService::supportsHeadset(OSArray *elements)
+{
+    bool result = false;
+    UInt32 count, index;
+    bool playPause = false, volumeIncrement = false, volumeDecrement = false;
+    bool fastForward = false, rewind = false, scanNext = false, scanPrevious = false;
+    bool systemMenuLeft = false, systemMenuRight = false;
+    
+    require(elements, exit);
+    
+    for (index = 0, count = elements->getCount(); index < count; index++) {
+        IOHIDElement *element = NULL;
+        
+        element = OSDynamicCast(IOHIDElement, elements->getObject(index));
+        if (!element) {
+            continue;
+        }
+        
+        switch (element->getUsagePage()) {
+                // If an element with kHIDPage_Telephony/kHIDUsage_Tfon_Flash exists
+                // then we return true.
+            case kHIDPage_Telephony:
+                if (element->getUsage() == kHIDUsage_Tfon_Flash) {
+                    result = true;
+                    goto exit;
+                }
+                break;
+            case kHIDPage_Consumer:
+                switch (element->getUsage()) {
+                    case kHIDUsage_Csmr_PlayOrPause:
+                        playPause = true;
+                        break;
+                    case kHIDUsage_Csmr_VolumeIncrement:
+                        volumeIncrement = true;
+                        break;
+                    case kHIDUsage_Csmr_VolumeDecrement:
+                        volumeDecrement = true;
+                        break;
+                    case kHIDUsage_Csmr_FastForward:
+                        fastForward = true;
+                        break;
+                    case kHIDUsage_Csmr_Rewind:
+                        rewind = true;
+                        break;
+                    case kHIDUsage_Csmr_ScanNextTrack:
+                        scanNext = true;
+                        break;
+                    case kHIDUsage_Csmr_ScanPreviousTrack:
+                        scanPrevious = true;
+                        break;
+                }
+                break;
+            case kHIDPage_GenericDesktop:
+                switch (element->getUsage()) {
+                    case kHIDUsage_GD_SystemMenuLeft:
+                        systemMenuLeft = true;
+                        break;
+                    case kHIDUsage_GD_SystemMenuRight:
+                        systemMenuRight = true;
+                        break;
+                }
+        }
+    }
+    
+    // If kHIDPage_Telephony/kHIDUsage_Tfon_Flash element was not present, then
+    // device must conform to primaryUsagePage/primaryUsage of consumer/consumer control
+    require_quiet(getPrimaryUsagePage() == kHIDPage_Consumer &&
+                  getPrimaryUsage() == kHIDUsage_Csmr_ConsumerControl, exit);
+    
+    // Play/Pause, volume increment and volume decrement elements must be present
+    require_quiet(playPause && volumeIncrement && volumeDecrement, exit);
+    
+    // None of these elements must be present
+    require_quiet(!(fastForward || rewind || scanNext || scanPrevious || systemMenuLeft || systemMenuRight), exit);
+    
+    result = true;
+    
+exit:
+    return result;
 }
 
 //====================================================================================================
@@ -833,7 +927,9 @@ no_attach:
     keyboardNub = NULL;
 
 no_nub:
-
+#else
+    (void)supportedModifiers;
+    (void)options;
 #endif // } TARGET_OS_EMBEDDED
     return NULL;
 }
@@ -865,7 +961,8 @@ no_attach:
     consumerNub = NULL;
 
 no_nub:
-
+#else
+    (void)options;
 #endif // } TARGET_OS_EMBEDDED
     return NULL;
 }
@@ -1227,7 +1324,7 @@ UInt32 IOHIDEventService::getElementValue (
 //==============================================================================
 // IOHIDEventService::debuggerTimerCallback
 //==============================================================================
-void IOHIDEventService::debuggerTimerCallback(IOTimerEventSource *sender)
+void IOHIDEventService::debuggerTimerCallback(IOTimerEventSource *sender __unused)
 {
     if ( _keyboard.debug.mask && _keyboard.debug.mask == _keyboard.debug.startMask && _keyboard.debug.mask == _keyboard.debug.nmiHoldMask) {
         triggerDebugger();
@@ -1247,7 +1344,7 @@ void IOHIDEventService::triggerDebugger()
 //==============================================================================
 // IOHIDEventService::stackshotTimerCallback
 //==============================================================================
-void IOHIDEventService::stackshotTimerCallback(IOTimerEventSource *sender)
+void IOHIDEventService::stackshotTimerCallback(IOTimerEventSource *sender __unused)
 {
     if ( _keyboard.debug.mask && _keyboard.debug.mask == _keyboard.debug.startMask ) {
         _keyboard.debug.stackshotHeld = 1;
@@ -1668,7 +1765,8 @@ void IOHIDEventService::dispatchAbsolutePointerEvent(
 #if TARGET_OS_EMBEDDED
 
     dispatchDigitizerEvent(timeStamp, 0, kDigitizerTransducerTypeStylus, inRange, buttonState, __ScaleToFixed(x, bounds->minx, bounds->maxx), __ScaleToFixed(y, bounds->miny, bounds->maxy), __ScaleToFixed(tipPressure, tipPressureMin, tipPressureMax));
-
+    
+    (void)options;
 #else
     IOHID_DEBUG(kIOHIDDebugCode_DispatchAbsolutePointer, x, y, buttonState, options);
 
@@ -2179,9 +2277,9 @@ exit:
 
     if ( childEvent )
         childEvent->release();
-
+    
+    (void) orientationType;
 #else
-
     bool invert = options & kDigitizerInvert;
 
     // Entering proximity

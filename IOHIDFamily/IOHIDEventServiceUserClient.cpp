@@ -29,6 +29,7 @@
 #include "IOHIDDebug.h"
 #include <sys/proc.h>
 #include <IOKit/hidsystem/IOHIDShared.h>
+#include "IOHIDFamilyTrace.h"
 
 #define kQueueSizeMin   0
 #define kQueueSizeFake  128
@@ -100,12 +101,32 @@ IOReturn IOHIDEventServiceUserClient::registerNotificationPort(
                             UInt32                      type __unused,
                             UInt32                      refCon __unused )
 {
+
+    IOReturn result;
+    
+    require_action(!isInactive(), exit, result=kIOReturnOffline);
+    
+    result = _commandGate->runAction(OSMemberFunctionCast(IOCommandGate::Action, this, &IOHIDEventServiceUserClient::registerNotificationPortGated), port);
+    
+exit:
+
+    return result;
+}
+
+
+IOReturn IOHIDEventServiceUserClient::registerNotificationPortGated(mach_port_t port, UInt32 type __unused, UInt32 refCon __unused)
+{
+    
+    releaseNotificationPort (_port);
+    
+     _port = port;
+    
     if (_queue) {
         _queue->setNotificationPort(port);
     }
+    
     return kIOReturnSuccess;
 }
-
 
 //==============================================================================
 // IOHIDEventServiceUserClient::clientMemoryForType
@@ -266,7 +287,7 @@ bool IOHIDEventServiceUserClient::start( IOService * provider )
     OSSafeReleaseNULL(object);
     
     if ( queueSize ) {
-        _queue = IOHIDEventServiceQueue::withCapacity(queueSize, getRegistryEntryID());
+        _queue = IOHIDEventServiceQueue::withCapacity(this, queueSize);
         require(_queue, exit);
     }
   
@@ -301,6 +322,10 @@ void IOHIDEventServiceUserClient::stop( IOService * provider )
         workLoop->removeEventSource(_commandGate);
     }
 
+    
+    releaseNotificationPort (_port);
+    _port = MACH_PORT_NULL;
+
     super::stop(provider);
 }
 
@@ -320,9 +345,14 @@ IOReturn IOHIDEventServiceUserClient::_open(
 //==============================================================================
 IOReturn IOHIDEventServiceUserClient::open(IOOptionBits options)
 {
-    if (!_owner || _state) {
+    if (!_owner) {
         return kIOReturnOffline;
     }
+    
+    if (_state == kUserClientStateOpen) {
+        return kIOReturnStillOpen;
+    }
+    
     
     _options = options;
     
@@ -333,7 +363,8 @@ IOReturn IOHIDEventServiceUserClient::open(IOOptionBits options)
                         this, &IOHIDEventServiceUserClient::eventServiceCallback)) ) {
        return kIOReturnExclusiveAccess;
     }
-    OSBitOrAtomic(kUserClientStateOpen, &_state);
+    
+    _state = kUserClientStateOpen;
     
     return kIOReturnSuccess;
 }
@@ -355,10 +386,10 @@ IOReturn IOHIDEventServiceUserClient::_close(
 IOReturn IOHIDEventServiceUserClient::close()
 {
     
-    uint32_t state = _state;
     
-    if (_owner && state == kUserClientStateOpen) {
-      _owner->close(this, _options | kIOHIDOpenedByEventSystem);
+    if (_owner && _state == kUserClientStateOpen) {
+        _owner->close(this, _options | kIOHIDOpenedByEventSystem);
+        _state = kUserClientStateClose;
     }
 
     return kIOReturnSuccess;
@@ -414,7 +445,10 @@ IOReturn IOHIDEventServiceUserClient::_copyEvent(
 //==============================================================================
 IOHIDEvent * IOHIDEventServiceUserClient::copyEvent(IOHIDEventType type, IOHIDEvent * matching, IOOptionBits options)
 {
-    return _owner ? _owner->copyEvent(type, matching, options) : NULL;
+    if (_owner && _state == kUserClientStateOpen) {
+        return _owner->copyEvent(type, matching, options);
+    }
+    return NULL;
 }
 
 //==============================================================================
@@ -434,7 +468,7 @@ IOReturn IOHIDEventServiceUserClient::_setElementValue(
 //==============================================================================
 IOReturn IOHIDEventServiceUserClient::setElementValue(UInt32 usagePage, UInt32 usage, UInt32 value)
 {
-    if (_owner) {
+    if (_owner && _state == kUserClientStateOpen) {
         return _owner->setElementValue(usagePage, usage, value);
     }
     return kIOReturnNoDevice;
@@ -507,8 +541,9 @@ void IOHIDEventServiceUserClient::enqueueEventGated( IOHIDEvent * event)
         _lastEventType = event->getType();
         Boolean result = _queue->enqueueEvent(event);
         if (result == false) {
-          _lastDroppedEventTime = _lastEventTime;
-          ++_droppedEventCount;
+            _lastDroppedEventTime = _lastEventTime;
+            ++_droppedEventCount;
+            IOHID_DEBUG(kIOHIDDebugCode_HIDEventServiceEnqueueFail, event->getTimeStamp(), 0, 0, 0);
         }
     }
 }

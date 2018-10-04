@@ -912,7 +912,6 @@ IOReturn IOHIDSystem::evCloseGated(void)
     if ( evScreen != (void *)0 )
     {
         screens = 0;
-        lastShmemPtr = (void *)0;
     }
     // Remove port notification for the eventPort and clear the port out
     //setEventPortGated(MACH_PORT_NULL);
@@ -1069,9 +1068,6 @@ IOHIDSystem::registerScreenGated(IOGraphicsDevice *io_gd,
     OSNumber *num = NULL;
     IOReturn result = kIOReturnSuccess;
     *index = -1;
-
-    if ( lastShmemPtr == (void *)0 )
-        lastShmemPtr = evs;
 
     /* shmemSize and bounds already set */
     log_screen_reg("%s %p %p %p\n", __func__, io_gd, boundsPtr, virtualBoundsPtr);
@@ -1415,11 +1411,9 @@ void IOHIDSystem::initShmem(bool clean)
 
     /* fill in EvOffsets structure */
     eop->evGlobalsOffset = sizeof(EvOffsets);
-    eop->evShmemOffset = eop->evGlobalsOffset + sizeof(EvGlobals);
 
     /* find pointers to start of globals and private shmem region */
-    evg = (EvGlobals *)((char *)shmem_addr + eop->evGlobalsOffset);
-    evs = (void *)((char *)shmem_addr + eop->evShmemOffset);
+    evg = (EvGlobals *)((char *)shmem_addr + sizeof(EvOffsets));
 
     evg->version = kIOHIDCurrentShmemVersion;
     evg->structSize = sizeof( EvGlobals);
@@ -1463,8 +1457,8 @@ void IOHIDSystem::initShmem(bool clean)
     }
     evg->LLELast = 0;
     evg->lleq[lleqSize-1].next = 0;
-    evg->LLEHead = evg->lleq[evg->LLELast].next;
-    evg->LLETail = evg->lleq[evg->LLELast].next;
+    evg->LLEHead = 1;
+    evg->LLETail = 1;
 
     _cursorLogTimed();
 }
@@ -1593,7 +1587,8 @@ void IOHIDSystem::postEvent(int           what,
 {
     // Clear out the keyboard queue up until this TS.  This should keep
     // the events in order.
-  
+    IOHIDEvent * event = NULL;
+    
     PROFILE_TRACE(7);
     
     if ( processKEQ ) {
@@ -1601,9 +1596,10 @@ void IOHIDSystem::postEvent(int           what,
     }
     
     NXEventExt nxEvent;
+    memset(&nxEvent, 0, sizeof(nxEvent));
+    
     uint64_t   ns;
     nxEvent.payload.type         = what;
-    nxEvent.payload.service_id = 0;
     if (sender) {
         IORegistryEntry *entry = OSDynamicCast(IORegistryEntry, sender);
         if (entry) {
@@ -1615,12 +1611,36 @@ void IOHIDSystem::postEvent(int           what,
     else {
         nxEvent.payload.service_id = getRegistryEntryID();
     }
+    
+    nxEvent.extension.flags = options;
+    
     nxEvent.payload.ext_pid      = extPID;
     nxEvent.payload.location.x   = location->xValue().as32();
     nxEvent.payload.location.y   = location->yValue().as32();
     nxEvent.payload.flags        = eventFlags();
-    nxEvent.payload.window       = 0;
 
+   
+    proc_t process =  proc_self();
+    if (process) {
+        kauth_cred_t cred = kauth_cred_proc_ref(process);
+        if (cred) {
+            nxEvent.extension.audit.val[0] = cred->cr_audit.as_aia_p->ai_auid;
+            nxEvent.extension.audit.val[1] = cred->cr_posix.cr_uid;
+            nxEvent.extension.audit.val[2] = cred->cr_posix.cr_groups[0];
+            nxEvent.extension.audit.val[3] = cred->cr_posix.cr_ruid;
+            nxEvent.extension.audit.val[4] = cred->cr_posix.cr_rgid;
+            nxEvent.extension.audit.val[5] = proc_pid(process);
+            nxEvent.extension.audit.val[6] = cred->cr_audit.as_aia_p->ai_asid;
+            nxEvent.extension.audit.val[7] = proc_pidversion(process);
+            nxEvent.extension.flags |= NX_EVENT_EXTENSION_AUDIT_TOKEN;
+            kauth_cred_unref(&cred);
+        }
+        proc_rele(process);
+    }
+    
+    require_action (nxEvent.extension.flags & NX_EVENT_EXTENSION_AUDIT_TOKEN, exit, HIDLogError("Unable to get audit token for event"));
+    
+    
     absolutetime_to_nanoseconds(ts, &ns);
     nxEvent.payload.time = ns;
 
@@ -1629,8 +1649,7 @@ void IOHIDSystem::postEvent(int           what,
         nxEvent.payload.data = *myData;
     }
 
-    nxEvent.extension.flags = options;
-    IOHIDEvent * event = IOHIDEvent::vendorDefinedEvent(
+    event = IOHIDEvent::vendorDefinedEvent(
                                   ts,
                                   kHIDPage_AppleVendor,
                                   kHIDUsage_AppleVendor_NXEvent,
@@ -1643,6 +1662,7 @@ void IOHIDSystem::postEvent(int           what,
         event->release();
     }
 
+exit:
     PROFILE_TRACE(8);
 }
 
@@ -2881,19 +2901,13 @@ IOReturn IOHIDSystem::newUserClientGated(task_t    owningTask,
     IOReturn  err = kIOReturnNoMemory;
 
     do {
-        if ( type == kIOHIDParamConnectType) {
-            if ( paramConnect) {
-                newConnect = paramConnect;
-                newConnect->retain();
-            }
-            else if ( eventsOpen) {
+        if (type == kIOHIDParamConnectType) {
+            if (eventsOpen) {
                 newConnect = new IOHIDParamUserClient;
-            }
-            else {
+            } else {
                 err = kIOReturnNotOpen;
                 break;
             }
-
         }
         else if ( type == kIOHIDServerConnectType) {
             newConnect = new IOHIDUserClient;
@@ -2914,21 +2928,17 @@ IOReturn IOHIDSystem::newUserClientGated(task_t    owningTask,
 
         // initialization is getting out of hand
 
-        if ( (newConnect != paramConnect) && (
-                    (false == newConnect->initWithTask(owningTask, security_id, type, properties))
-                    || (false == newConnect->setProperty(kIOUserClientCrossEndianCompatibleKey, kOSBooleanTrue))
-                    || (false == newConnect->attach( this ))
-                    || (false == newConnect->start( this ))
-                    || ((type == kIOHIDServerConnectType)
-                        && (err = evOpen())) 
-                )) {
+        if ((false == newConnect->initWithTask(owningTask, security_id, type, properties))
+            || (false == newConnect->setProperty(kIOUserClientCrossEndianCompatibleKey, kOSBooleanTrue))
+            || (false == newConnect->attach( this ))
+            || (false == newConnect->start( this ))
+            || ((type == kIOHIDServerConnectType)
+                && (err = evOpen()))) {
             newConnect->detach( this );
             newConnect->release();
             newConnect = 0;
             break;
         }
-        if ( type == kIOHIDParamConnectType)
-            paramConnect = newConnect;
 
         err = kIOReturnSuccess;
 

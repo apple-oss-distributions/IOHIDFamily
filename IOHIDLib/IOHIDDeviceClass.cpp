@@ -32,7 +32,6 @@
 #include "IOHIDQueueClass.h"
 #include "IOHIDTransactionClass.h"
 #include "IOHIDPrivateKeys.h"
-#include "IOHIDParserPriv.h"
 #include "IOHIDDebug.h"
 
 __BEGIN_DECLS
@@ -42,6 +41,9 @@ __BEGIN_DECLS
 #include <IOKit/IODataQueueClient.h>
 #include <System/libkern/OSCrossEndian.h>
 __END_DECLS
+
+#include "IOHIDDescriptorParser.h"
+#include "IOHIDDescriptorParserPrivate.h"
 
 #define connectCheck() do {	    \
     if (!fConnection)		    \
@@ -938,13 +940,15 @@ IOHIDDeviceClass::getReport(IOHIDReportType     reportType,
 {
     uint64_t    in[3];
     IOReturn    ret;
-    size_t      reportLength = *pReportLength;
+    size_t      reportLength = 0;
 
     allChecks();
     
     if (!pReportLength || (*pReportLength < 0))
     	return kIOReturnNoMemory;
-    	
+    
+    reportLength = *pReportLength;
+    
     // Async getReport
     if (callback) 
     {

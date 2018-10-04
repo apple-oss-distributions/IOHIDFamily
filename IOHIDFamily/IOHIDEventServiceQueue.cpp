@@ -31,6 +31,7 @@
 #include "IOHIDEventService.h"
 #include "IOHIDEvent.h"
 #include "IOHIDDebug.h"
+#include <os/overflow.h>
 
 #define super IOSharedDataQueue
 OSDefineMetaClassAndStructors( IOHIDEventServiceQueue, super )
@@ -49,7 +50,7 @@ IOHIDEventServiceQueue *IOHIDEventServiceQueue::withCapacity(UInt32 size)
     return dataQueue;
 }
 
-IOHIDEventServiceQueue *IOHIDEventServiceQueue::withCapacity(UInt32 size, uint64_t owner)
+IOHIDEventServiceQueue *IOHIDEventServiceQueue::withCapacity(OSObject *owner, UInt32 size)
 {
     IOHIDEventServiceQueue *dataQueue = IOHIDEventServiceQueue::withCapacity(size);
     
@@ -82,14 +83,24 @@ Boolean IOHIDEventServiceQueue::enqueueEvent( IOHIDEvent * event )
     UInt32              head;
     UInt32              tail;
     UInt32              newTail;
-    const UInt32        entrySize = (UInt32)(dataSize + DATA_QUEUE_ENTRY_HEADER_SIZE);
+    UInt32              entrySize;
     IODataQueueEntry *  entry;
     bool                queueFull = false;
     bool                result    = true;
-
+    
+    // check overflow of alignment
+    if (dataSize < eventSize) {
+        return false;
+    }
+    
+    // check overflow of entrySize
+    if (os_add_overflow(dataSize, DATA_QUEUE_ENTRY_HEADER_SIZE, &entrySize)) {
+        return false;
+    }
+    
     // Force a single read of head and tail
-    head = __c11_atomic_load((_Atomic UInt32 *)&dataQueue->head, __ATOMIC_RELAXED);
     tail = __c11_atomic_load((_Atomic UInt32 *)&dataQueue->tail, __ATOMIC_RELAXED);
+    head = __c11_atomic_load((_Atomic UInt32 *)&dataQueue->head, __ATOMIC_ACQUIRE);
 
     if ( tail > getQueueSize() || head > getQueueSize() || entrySize < dataSize)
     {
@@ -168,7 +179,7 @@ Boolean IOHIDEventServiceQueue::enqueueEvent( IOHIDEvent * event )
     // queue was empty prior to enqueue() or queue was emptied during enqueue()
     if ( (event->getOptions() & kHIDDispatchOptionDeliveryNotificationSuppress) == 0) {
         if ( (event->getOptions() & kHIDDispatchOptionDeliveryNotificationForce) || ( head == tail )
-            || ( __c11_atomic_load((_Atomic UInt32 *)&dataQueue->head, __ATOMIC_RELAXED) == tail ) || queueFull) {
+            || ( __c11_atomic_load((_Atomic UInt32 *)&dataQueue->head, __ATOMIC_ACQUIRE) == tail ) || queueFull) {
             //if (queueFull) {
             //    HIDLogError("IOHIDEventServiceQueue::enqueueEvent - Queue is full, notifying again 0xllx", _owner);
             //}

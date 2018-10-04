@@ -51,8 +51,8 @@ enum {
 
 
 enum {
-    kIOParseVendorMessageReport,
-    kIODispatchVendorMessageReport
+    kIOHandleChildVendorMessageReport,
+    kIOHandlePrimaryVendorMessageReport
 };
 #define GetReportType( type )                                               \
     ((type <= kIOHIDElementTypeInput_ScanCodes) ? kIOHIDReportTypeInput :   \
@@ -227,6 +227,15 @@ OSDefineMetaClassAndStructors( IOHIDEventDriver, IOHIDEventService )
 #define _lastReportTime                 _reserved->lastReportTime
 #define _vendorMessage                  _reserved->vendorMessage
 #define _biometric                      _reserved->biometric
+#define _accel                          _reserved->accel
+#define _gyro                           _reserved->gyro
+#define _compass                        _reserved->compass
+#define _temperature                    _reserved->temperature
+#define _sensorProperty                 _reserved->sensorProperty
+#define _orientation                    _reserved->orientation
+#define _workLoop                       _reserved->workLoop
+#define _commandGate                    _reserved->commandGate
+
 
 //====================================================================================================
 // IOHIDEventDriver::init
@@ -268,11 +277,30 @@ void IOHIDEventDriver::free ()
     OSSafeReleaseNULL(_unicode.gesturesCandidates);
     OSSafeReleaseNULL(_unicode.gestureStateElement);
     OSSafeReleaseNULL(_gameController.elements);
-    OSSafeReleaseNULL(_vendorMessage.elements);
+    OSSafeReleaseNULL(_vendorMessage.childElements);
+    OSSafeReleaseNULL(_vendorMessage.primaryElements);
     OSSafeReleaseNULL(_vendorMessage.pendingEvents);
     OSSafeReleaseNULL(_supportedElements);
     OSSafeReleaseNULL(_biometric.elements);
+    OSSafeReleaseNULL(_accel.elements);
+    OSSafeReleaseNULL(_gyro.elements);
+    OSSafeReleaseNULL(_compass.elements);
+    OSSafeReleaseNULL(_temperature.elements);
+    OSSafeReleaseNULL(_sensorProperty.reportInterval);
+    OSSafeReleaseNULL(_sensorProperty.reportLatency);
+    OSSafeReleaseNULL(_sensorProperty.sniffControl);
+    OSSafeReleaseNULL(_orientation.elements);
+    
+    if (_commandGate) {
+        if ( _workLoop ) {
+            _workLoop->removeEventSource(_commandGate);
+        }
+        _commandGate->release();
+        _commandGate = 0;
+    }
 
+    OSSafeReleaseNULL(_workLoop);
+   
     if (_reserved) {
         IODelete(_reserved, ExpansionData, 1);
         _reserved = NULL;
@@ -290,6 +318,19 @@ bool IOHIDEventDriver::handleStart( IOService * provider )
 
     if ( !_interface )
         return false;
+
+    _workLoop = getWorkLoop();
+    if (!_workLoop) {
+        return false;
+    }
+
+    _workLoop->retain();
+    
+    _commandGate = IOCommandGate::commandGate(this);
+    if (!_commandGate || (_workLoop->addEventSource(_commandGate) != kIOReturnSuccess)) {
+        return false;
+    }
+
 
     IOService * service = this;
 
@@ -501,7 +542,13 @@ bool IOHIDEventDriver::parseElements ( OSArray* elementArray, UInt32 bootProtoco
                 parseLEDElement(element) ||
                 parseKeyboardElement(element) ||
                 parseUnicodeElement(element) ||
-                parseBiometricElement(element)
+                parseBiometricElement(element) ||
+                parseAccelElement (element) ||
+                parseGyroElement (element) ||
+                parseCompassElement (element) ||
+                parseTemperatureElement (element) ||
+                parseDeviceOrientationElement (element) ||
+                parseSensorPropertyElement (element)
                 ) {
             result = true;
             continue;
@@ -558,7 +605,7 @@ bool IOHIDEventDriver::parseElements ( OSArray* elementArray, UInt32 bootProtoco
             if ( !element )
                 continue;
             
-            if ( _relative.elements && _relative.elements->getCount() ){
+            if (_relative.elements && _relative.elements->getCount()) {
                 _relative.elements->setObject(element);
             } else if ( _gameController.capable ) {
                 _gameController.elements->setObject(element);
@@ -568,8 +615,13 @@ bool IOHIDEventDriver::parseElements ( OSArray* elementArray, UInt32 bootProtoco
                 DigitizerTransducer * transducer = OSDynamicCast(DigitizerTransducer, _digitizer.transducers->getObject(0));
                 if ( transducer )
                     transducer->elements->setObject(element);
-            } else if ( _relative.elements ) {
-                _relative.elements->setObject(element);
+            } else {
+                if ( !_relative.elements ) {
+                    _relative.elements = OSArray::withCapacity(4);
+                }
+                if ( _relative.elements ) {
+                    _relative.elements->setObject(element);
+                }
             }
         }
     }
@@ -590,6 +642,13 @@ bool IOHIDEventDriver::parseElements ( OSArray* elementArray, UInt32 bootProtoco
     setAccelerationProperties();
     setVendorMessageProperties();
     setBiometricProperties();
+    setAccelProperties();
+    setGyroProperties();
+    setCompassProperties();
+    setTemperatureProperties();
+    setSensorProperties();
+    setDeviceOrientationProperties();
+
     
 exit:
 
@@ -1010,17 +1069,22 @@ exit:
 //====================================================================================================
 void IOHIDEventDriver::setVendorMessageProperties()
 {
-    OSDictionary * properties = OSDictionary::withCapacity(4);
-    
-    require(properties, exit);
-    require(_vendorMessage.elements, exit);
-
-    properties->setObject(kIOHIDElementKey, _vendorMessage.elements);
-    
-    setProperty("VendorMessage", properties );
-
-exit:
-    OSSafeReleaseNULL(properties);
+    if (_vendorMessage.childElements) {
+        OSDictionary * properties = OSDictionary::withCapacity(1);
+        if (properties) {
+            properties->setObject(kIOHIDElementKey, _vendorMessage.childElements);
+            setProperty("ChildVendorMessage", properties );
+            OSSafeReleaseNULL(properties);
+        }
+    }
+    if (_vendorMessage.primaryElements) {
+        OSDictionary * properties = OSDictionary::withCapacity(1);
+        if (properties) {
+            properties->setObject(kIOHIDElementKey, _vendorMessage.primaryElements);
+            setProperty("PrimaryVendorMessage", properties);
+            OSSafeReleaseNULL(properties);
+        }
+    }
 }
 
 //====================================================================================================
@@ -1028,7 +1092,7 @@ exit:
 //====================================================================================================
 void IOHIDEventDriver::setBiometricProperties()
 {
-    OSDictionary *properties = OSDictionary::withCapacity(4);
+    OSDictionary *properties = OSDictionary::withCapacity(1);
     
     require(properties, exit);
     require(_biometric.elements, exit);
@@ -1040,6 +1104,133 @@ void IOHIDEventDriver::setBiometricProperties()
 exit:
     OSSafeReleaseNULL(properties);
 }
+
+//====================================================================================================
+// IOHIDEventDriver::setAccelProperties
+//====================================================================================================
+void IOHIDEventDriver::setAccelProperties()
+{
+    OSDictionary *properties = OSDictionary::withCapacity(1);
+    
+    require(properties, exit);
+    require(_accel.elements, exit);
+    
+    properties->setObject(kIOHIDElementKey, _accel.elements);
+    
+    setProperty("Accel", properties);
+    
+exit:
+    OSSafeReleaseNULL(properties);
+}
+
+//====================================================================================================
+// IOHIDEventDriver::setGyroProperties
+//====================================================================================================
+void IOHIDEventDriver::setGyroProperties()
+{
+    OSDictionary *properties = OSDictionary::withCapacity(1);
+    
+    require(properties, exit);
+    require(_gyro.elements, exit);
+    
+    properties->setObject(kIOHIDElementKey, _gyro.elements);
+    
+    setProperty("Gyro", properties);
+    
+exit:
+    OSSafeReleaseNULL(properties);
+}
+
+
+//====================================================================================================
+// IOHIDEventDriver::setCompassProperties
+//====================================================================================================
+void IOHIDEventDriver::setCompassProperties()
+{
+    OSDictionary *properties = OSDictionary::withCapacity(1);
+    
+    require(properties, exit);
+    require(_compass.elements, exit);
+    
+    properties->setObject(kIOHIDElementKey, _compass.elements);
+    
+    setProperty("Compass", properties);
+    
+exit:
+    OSSafeReleaseNULL(properties);
+}
+
+
+//====================================================================================================
+// IOHIDEventDriver::setTemperatureProperties
+//====================================================================================================
+void IOHIDEventDriver::setTemperatureProperties()
+{
+    OSDictionary *properties = OSDictionary::withCapacity(1);
+    
+    require(properties, exit);
+    require(_temperature.elements, exit);
+    
+    properties->setObject(kIOHIDElementKey, _temperature.elements);
+    
+    setProperty("Temperature", properties);
+    
+exit:
+    OSSafeReleaseNULL(properties);
+}
+
+
+//====================================================================================================
+// IOHIDEventDriver::setSensorProperties
+//====================================================================================================
+void IOHIDEventDriver::setSensorProperties()
+{
+    OSDictionary * properties           = OSDictionary::withCapacity(2);
+    UInt32         sensorPropertyCaps   = 0;
+    
+    require(properties, exit);
+
+    if (_sensorProperty.reportInterval) {
+        properties->setObject("ReportInterval", _sensorProperty.reportInterval);
+        sensorPropertyCaps |= kSensorPropertyReportInterval;
+    }
+
+    if (_sensorProperty.reportLatency) {
+        properties->setObject("ReportLatency", _sensorProperty.reportLatency);
+        sensorPropertyCaps |= kSensorPropertyReportLatency;
+    }
+
+    if (_sensorProperty.sniffControl) {
+        properties->setObject("SniffControl", _sensorProperty.sniffControl);
+        sensorPropertyCaps |= kSensorPropertySniffControl;
+    }
+
+    setProperty("SensorProperties", properties);
+    setProperty(kIOHIDEventServiceSensorPropertySupportedKey, sensorPropertyCaps, 32);
+
+exit:
+    
+    OSSafeReleaseNULL(properties);
+}
+
+//====================================================================================================
+// IOHIDEventDriver::setDeviceOrientationProperties
+//====================================================================================================
+void IOHIDEventDriver::setDeviceOrientationProperties()
+{
+    OSDictionary *properties = OSDictionary::withCapacity(1);
+    
+    require(properties, exit);
+    require(_orientation.elements, exit);
+    
+    properties->setObject(kIOHIDElementKey, _orientation.elements);
+    
+    setProperty("DeviceOrientation", properties);
+    
+exit:
+    OSSafeReleaseNULL(properties);
+}
+
 
 //====================================================================================================
 // IOHIDEventDriver::conformTo
@@ -1150,6 +1341,17 @@ exit:
     return result;
 }
 
+#define dispatch_workloop_sync(b)            \
+if (!isInactive() && _commandGate) {         \
+    _commandGate->runActionBlock(^IOReturn{  \
+        if (isInactive()) {                  \
+            return kIOReturnOffline;         \
+        };                                   \
+        b                                    \
+        return kIOReturnSuccess;             \
+    });                                      \
+}
+
 //====================================================================================================
 // IOHIDEventDriver::setProperties
 //====================================================================================================
@@ -1158,24 +1360,88 @@ IOReturn IOHIDEventDriver::setProperties( OSObject * properties )
     IOReturn        result          = kIOReturnUnsupported;
     OSDictionary *  propertyDict    = OSDynamicCast(OSDictionary, properties);
     OSBoolean *     boolVal         = NULL;
-    
+    OSNumber *      numberVal       = NULL;
+
     require(propertyDict, exit);
     
-    if ( (boolVal = OSDynamicCast(OSBoolean, propertyDict->getObject(kIOHIDDigitizerGestureCharacterStateKey)))) {
-        require(_unicode.gestureStateElement, exit);
-        
-        _unicode.gestureStateElement->setValue(boolVal==kOSBooleanTrue ? 1 : 0);
+    if (_unicode.gestureStateElement && (boolVal = OSDynamicCast(OSBoolean, propertyDict->getObject(kIOHIDDigitizerGestureCharacterStateKey)))) {
+        dispatch_workloop_sync ({
+             _unicode.gestureStateElement->setValue(boolVal==kOSBooleanTrue ? 1 : 0);
+        });
         result = kIOReturnSuccess;
     }
     
-    
+    if (_sensorProperty.reportInterval && (numberVal = OSDynamicCast(OSNumber, propertyDict->getObject(kIOHIDReportIntervalKey)))) {
+        dispatch_workloop_sync ({
+            _sensorProperty.reportInterval->setValue(numberVal->unsigned32BitValue());
+        });
+    }
+
+    if (_sensorProperty.reportLatency && (numberVal = OSDynamicCast(OSNumber, propertyDict->getObject(kIOHIDBatchIntervalKey)))) {
+        dispatch_workloop_sync ({
+            _sensorProperty.reportLatency->setValue(numberVal->unsigned32BitValue());
+        });
+    }
+
+    if (_sensorProperty.sniffControl && (numberVal = OSDynamicCast(OSNumber, propertyDict->getObject(kIOHIDSensorPropertySniffControlKey)))) {
+        dispatch_workloop_sync ({
+            _sensorProperty.sniffControl->setValue(numberVal->unsigned32BitValue());
+        });
+    }
+
 exit:
-    if ( result != kIOReturnSuccess )
+
+    if (result != kIOReturnSuccess) {
         result = super::setProperties(properties);
+    }
     
     return result;
 }
 
+//====================================================================================================
+// IOHIDEventDriver::copyEvent
+//====================================================================================================
+IOHIDEvent * IOHIDEventDriver::copyEvent(IOHIDEventType type, IOHIDEvent * matching, IOOptionBits options __unused)
+{
+    IOHIDEvent *    event = NULL;
+    UInt32          usagePage;
+    UInt32          usage;
+
+    if (type == kIOHIDEventTypeKeyboard) {
+        require(matching && _keyboard.elements, exit);
+        usagePage   = matching->getIntegerValue(kIOHIDEventFieldKeyboardUsagePage);
+        usage       = matching->getIntegerValue(kIOHIDEventFieldKeyboardUsage);
+
+        for (unsigned int index = 0; index < _keyboard.elements->getCount(); index++)
+        {
+            IOHIDElement * element = OSDynamicCast(IOHIDElement, _keyboard.elements->getObject(index));
+            require(element, exit);
+
+            if ( usagePage != element->getUsagePage() || usage != element->getUsage() )
+                continue;
+
+            event = IOHIDEvent::keyboardEvent(element->getTimeStamp(), usagePage, usage, element->getValue());
+            break;
+        }
+    } else if (type == kIOHIDEventTypeOrientation) {
+        require(_orientation.elements, exit);
+        for (unsigned int index = 0; index < _orientation.elements->getCount(); index++)
+        {
+            IOHIDElement * element = OSDynamicCast(IOHIDElement, _orientation.elements->getObject(index));
+            if (!element->getValue()) {
+                continue;
+            }
+            
+            event = IOHIDEvent::orientationEvent(element->getTimeStamp(), kIOHIDOrientationTypeCMUsage);
+            if (event) {
+                event->setIntegerValue (kIOHIDEventFieldOrientationDeviceOrientationUsage, element->getUsage());
+            }
+            break;
+        }
+    }
+exit:
+    return event;
+}
 
 //====================================================================================================
 // IOHIDEventDriver::parseDigitizerElement
@@ -1352,11 +1618,6 @@ bool IOHIDEventDriver::parseGameControllerElement(IOHIDElement * element)
     
     require(_authenticatedDevice, exit);
     
-    if ( !_gameController.elements ) {
-        _gameController.elements = OSArray::withCapacity(4);
-        require(_gameController.elements, exit);
-    }
-    
     switch ( usagePage ) {
         case kHIDPage_GenericDesktop:
         case kHIDPage_Button:
@@ -1375,6 +1636,11 @@ bool IOHIDEventDriver::parseGameControllerElement(IOHIDElement * element)
     
     require(store, exit);
     
+    if ( !_gameController.elements ) {
+        _gameController.elements = OSArray::withCapacity(4);
+        require(_gameController.elements, exit);
+    }
+    
     _gameController.elements->setObject(element);
     
 exit:
@@ -1389,11 +1655,6 @@ bool IOHIDEventDriver::parseMultiAxisElement(IOHIDElement * element)
     UInt32 usagePage    = element->getUsagePage();
     UInt32 usage        = element->getUsage();
     bool   store        = false;
-    
-    if ( !_multiAxis.elements ) {
-        _multiAxis.elements = OSArray::withCapacity(4);
-        require(_multiAxis.elements, exit);
-    }
     
     switch ( usagePage ) {
         case kHIDPage_GenericDesktop:
@@ -1417,6 +1678,11 @@ bool IOHIDEventDriver::parseMultiAxisElement(IOHIDElement * element)
     
     require(store, exit);
     
+    if ( !_multiAxis.elements ) {
+        _multiAxis.elements = OSArray::withCapacity(4);
+        require(_multiAxis.elements, exit);
+    }
+    
     _multiAxis.elements->setObject(element);
 
 exit:
@@ -1431,11 +1697,6 @@ bool IOHIDEventDriver::parseRelativeElement(IOHIDElement * element)
     UInt32 usagePage    = element->getUsagePage();
     UInt32 usage        = element->getUsage();
     bool   store        = false;
-    
-    if ( !_relative.elements ) {
-        _relative.elements = OSArray::withCapacity(4);
-        require(_relative.elements, exit);
-    }
 
     switch ( usagePage ) {
         case kHIDPage_GenericDesktop:
@@ -1453,6 +1714,11 @@ bool IOHIDEventDriver::parseRelativeElement(IOHIDElement * element)
     
     require(store, exit);
     
+    if ( !_relative.elements ) {
+        _relative.elements = OSArray::withCapacity(4);
+        require(_relative.elements, exit);
+    }
+    
     _relative.elements->setObject(element);
 
 exit:
@@ -1467,11 +1733,6 @@ bool IOHIDEventDriver::parseScrollElement(IOHIDElement * element)
     UInt32 usagePage    = element->getUsagePage();
     UInt32 usage        = element->getUsage();
     bool   store        = false;
-    
-    if ( !_scroll.elements ) {
-        _scroll.elements = OSArray::withCapacity(4);
-        require(_scroll.elements, exit);
-    }
 
     switch ( usagePage ) {
         case kHIDPage_GenericDesktop:
@@ -1499,6 +1760,11 @@ bool IOHIDEventDriver::parseScrollElement(IOHIDElement * element)
     
     require(store, exit);
     
+    if ( !_scroll.elements ) {
+        _scroll.elements = OSArray::withCapacity(4);
+        require(_scroll.elements, exit);
+    }
+    
     _scroll.elements->setObject(element);
 
 exit:
@@ -1513,11 +1779,6 @@ bool IOHIDEventDriver::parseLEDElement(IOHIDElement * element)
     UInt32 usagePage    = element->getUsagePage();
     bool   store        = false;
     
-    if ( !_led.elements ) {
-        _led.elements = OSArray::withCapacity(4);
-        require(_led.elements, exit);
-    }
-    
     switch ( usagePage ) {
         case kHIDPage_LEDs:
             store = true;
@@ -1525,6 +1786,11 @@ bool IOHIDEventDriver::parseLEDElement(IOHIDElement * element)
     }
     
     require(store, exit);
+    
+    if ( !_led.elements ) {
+        _led.elements = OSArray::withCapacity(4);
+        require(_led.elements, exit);
+    }
     
     _led.elements->setObject(element);
     
@@ -1541,11 +1807,6 @@ bool IOHIDEventDriver::parseKeyboardElement(IOHIDElement * element)
     UInt32 usagePage    = element->getUsagePage();
     UInt32 usage        = element->getUsage();
     bool   store        = false;
-  
-    if ( !_keyboard.elements ) {
-        _keyboard.elements = OSArray::withCapacity(4);
-        require(_keyboard.elements, exit);
-    }
 
     switch ( usagePage ) {
         case kHIDPage_GenericDesktop:
@@ -1614,6 +1875,7 @@ bool IOHIDEventDriver::parseKeyboardElement(IOHIDElement * element)
             if (usage == kHIDUsage_Csmr_ACKeyboardLayoutSelect)
                 setProperty(kIOHIDSupportsGlobeKeyKey, kOSBooleanTrue);
         case kHIDPage_Telephony:
+        case kHIDPage_CameraControl:
             store = true;
             break;
         case kHIDPage_AppleVendorTopCase:
@@ -1653,6 +1915,11 @@ bool IOHIDEventDriver::parseKeyboardElement(IOHIDElement * element)
     
     require(store, exit);
     
+    if ( !_keyboard.elements ) {
+        _keyboard.elements = OSArray::withCapacity(4);
+        require(_keyboard.elements, exit);
+    }
+    
     _keyboard.elements->setObject(element);
 
 exit:
@@ -1684,12 +1951,12 @@ bool IOHIDEventDriver::parseLegacyUnicodeElement(IOHIDElement * element)
     UInt32 usagePage    = element->getUsagePage();
     bool   store        = false;
     
+    require(usagePage==kHIDPage_Unicode, exit);
+    
     if ( !_unicode.legacyElements ) {
         _unicode.legacyElements = OSArray::withCapacity(4);
         require(_unicode.legacyElements, exit);
     }
-    
-    require(usagePage==kHIDPage_Unicode, exit);
     
     _unicode.legacyElements->setObject(element);
     store = true;
@@ -1828,17 +2095,304 @@ bool IOHIDEventDriver::parseVendorMessageElement(IOHIDElement * element)
     if (parent &&
         (parent->getCollectionType() == kIOHIDElementCollectionTypeApplication ||
          parent->getCollectionType() == kIOHIDElementCollectionTypePhysical) &&
-        parent->getUsagePage() == kHIDPage_AppleVendor &&
-        parent->getUsage() == kHIDUsage_AppleVendor_Message) {
-        if (!_vendorMessage.elements) {
-            _vendorMessage.elements = OSArray::withCapacity(1);
-            require(_vendorMessage.elements, exit);
+         parent->getUsagePage() == kHIDPage_AppleVendor &&
+         parent->getUsage() == kHIDUsage_AppleVendor_Message) {
+        
+        bool primary = false;
+        OSArray * primaryEvents = OSDynamicCast (OSArray, getProperty("PrimaryVendorEvents"));
+        if (primaryEvents) {
+            for (unsigned int index = 0; index < primaryEvents->getCount(); index++) {
+                OSNumber * pair = OSDynamicCast (OSNumber, primaryEvents->getObject(index));
+                if (pair && pair->unsigned64BitValue() == ((uint64_t)element->getUsagePage() << 32 | element->getUsage())) {
+                    primary = true;
+                    break;
+                }
+            }
         }
-        _vendorMessage.elements->setObject(element);
-         result = true;
+
+        OSArray * elements = NULL;
+
+        if (primary) {
+            if (!_vendorMessage.primaryElements) {
+                _vendorMessage.primaryElements = OSArray::withCapacity(1);
+            }
+            elements = _vendorMessage.primaryElements;
+        } else {
+            if (!_vendorMessage.childElements) {
+                _vendorMessage.childElements = OSArray::withCapacity(1);
+            }
+            elements = _vendorMessage.childElements;
+        }
+        require(elements, exit);
+        
+        elements->setObject(element);
+
+        result = true;
     }
 exit:
     return result;
+}
+
+//====================================================================================================
+// IOHIDEventDriver::parseAccelElement
+//====================================================================================================
+bool IOHIDEventDriver::parseAccelElement(IOHIDElement * element)
+{
+    UInt32 usagePage    = element->getUsagePage();
+    UInt32 usage        = element->getUsage();
+    bool   store        = false;
+    IOHIDElement * parent = element->getParentElement();
+    
+    switch (usagePage) {
+        case kHIDPage_Sensor:
+            switch (usage) {
+                case kHIDUsage_Snsr_Data_Motion_AccelerationAxisX:
+                case kHIDUsage_Snsr_Data_Motion_AccelerationAxisY:
+                case kHIDUsage_Snsr_Data_Motion_AccelerationAxisZ:
+                    store = true;
+                    break;
+            }
+            break;
+        case kHIDPage_AppleVendorMotion:
+            if (parent &&
+                (parent->getUsage() == kHIDUsage_Snsr_Motion_Accelerometer ||
+                parent->getUsage() == kHIDUsage_Snsr_Motion_Accelerometer3D)) {
+                switch (usage) {
+                    case kHIDUsage_AppleVendorMotion_Type:
+                    case kHIDUsage_AppleVendorMotion_Path:
+                    case kHIDUsage_AppleVendorMotion_Generation:
+                        store = true;
+                        break;
+                }
+            }
+            break;
+    }
+    
+    require(store, exit);
+    
+    if (!_accel.elements) {
+        _accel.elements = OSArray::withCapacity(6);
+        require(_accel.elements, exit);
+    }
+    
+    _accel.elements->setObject(element);
+    
+exit:
+    return store;
+}
+
+
+//====================================================================================================
+// IOHIDEventDriver::parseGyroElement
+//====================================================================================================
+bool IOHIDEventDriver::parseGyroElement(IOHIDElement * element)
+{
+    UInt32 usagePage    = element->getUsagePage();
+    UInt32 usage        = element->getUsage();
+    bool   store        = false;
+    IOHIDElement * parent = element->getParentElement();
+    
+    switch (usagePage) {
+        case kHIDPage_Sensor:
+            switch (usage) {
+                case kHIDUsage_Snsr_Data_Motion_AngularVelocityXAxis:
+                case kHIDUsage_Snsr_Data_Motion_AngularVelocityYAxis:
+                case kHIDUsage_Snsr_Data_Motion_AngularVelocityZAxis:
+                    store = true;
+                    break;
+            }
+            break;
+        case kHIDPage_AppleVendorMotion:
+            if (parent &&
+                (parent->getUsage() == kHIDUsage_Snsr_Motion_Gyrometer ||
+                parent->getUsage() == kHIDUsage_Snsr_Motion_Gyrometer3D)) {
+                switch (usage) {
+                    case kHIDUsage_AppleVendorMotion_Type:
+                    case kHIDUsage_AppleVendorMotion_Path:
+                    case kHIDUsage_AppleVendorMotion_Generation:
+                        store = true;
+                        break;
+                }
+            }
+            break;
+    }
+    
+    require(store, exit);
+    
+    if (!_gyro.elements) {
+        _gyro.elements = OSArray::withCapacity(6);
+        require(_gyro.elements, exit);
+    }
+    
+    _gyro.elements->setObject(element);
+    
+exit:
+      return store;
+}
+
+//====================================================================================================
+// IOHIDEventDriver::parseCompassElement
+//====================================================================================================
+bool IOHIDEventDriver::parseCompassElement(IOHIDElement * element)
+{
+    UInt32 usagePage    = element->getUsagePage();
+    UInt32 usage        = element->getUsage();
+    bool   store        = false;
+    IOHIDElement * parent = element->getParentElement();
+    
+    switch (usagePage) {
+        case kHIDPage_Sensor:
+            switch (usage) {
+                case kHIDUsage_Snsr_Data_Orientation_MagneticFluxXAxis:
+                case kHIDUsage_Snsr_Data_Orientation_MagneticFluxYAxis:
+                case kHIDUsage_Snsr_Data_Orientation_MagneticFluxZAxis:
+                    store = true;
+                    break;
+            }
+            break;
+        case kHIDPage_AppleVendorMotion:
+            if (parent &&
+                (parent->getUsage() == kHIDUsage_Snsr_Orientation_CompassD ||
+                parent->getUsage() == kHIDUsage_Snsr_Orientation_Compass3D)) {
+                switch (usage) {
+                    case kHIDUsage_AppleVendorMotion_Type:
+                    case kHIDUsage_AppleVendorMotion_Path:
+                    case kHIDUsage_AppleVendorMotion_Generation:
+                        store = true;
+                        break;
+                }
+            }
+            break;
+    }
+    
+    require(store, exit);
+    
+    if (!_compass.elements) {
+        _compass.elements = OSArray::withCapacity(6);
+        require(_compass.elements, exit);
+    }
+    
+    _compass.elements->setObject(element);
+    
+exit:
+    return store;
+}
+
+//====================================================================================================
+// IOHIDEventDriver::parseTemperatureElement
+//====================================================================================================
+bool IOHIDEventDriver::parseTemperatureElement(IOHIDElement * element)
+{
+    UInt32 usagePage    = element->getUsagePage();
+    UInt32 usage        = element->getUsage();
+    bool   store        = false;
+    
+    switch (usagePage) {
+        case kHIDPage_Sensor:
+            switch (usage) {
+                case kHIDUsage_Snsr_Environmental_Temperature:
+                    store = true;
+                    break;
+            }
+            break;
+        default:
+            break;
+    }
+    
+    require(store, exit);
+    
+    if (!_temperature.elements) {
+        _temperature.elements = OSArray::withCapacity(6);
+        require(_temperature.elements, exit);
+    }
+    
+    _temperature.elements->setObject(element);
+    
+exit:
+    return store;
+}
+
+//====================================================================================================
+// IOHIDEventDriver::parseSensorPropertyElement
+//====================================================================================================
+bool IOHIDEventDriver::parseSensorPropertyElement(IOHIDElement * element)
+{
+    UInt32 usagePage        = element->getUsagePage();
+    UInt32 usage            = element->getUsage();
+    IOHIDElement ** propertyElement = NULL;
+
+    require(element->getType() == kIOHIDElementTypeFeature, exit);
+
+    switch (usagePage) {
+        case kHIDPage_Sensor:
+            switch (usage) {
+                case kHIDUsage_Snsr_Property_ReportInterval:
+                    propertyElement = &_sensorProperty.reportInterval;
+                   break;
+                case kHIDUsage_Snsr_Property_ReportLatency:
+                    propertyElement = &_sensorProperty.reportLatency;
+                    break;
+            }
+        case kHIDPage_AppleVendorSensor:
+            switch (usage) {
+                case kHIDUsage_AppleVendorSensor_BTSniffOff:
+                    propertyElement = &_sensorProperty.sniffControl;
+                    break;
+            }
+            break;
+    }
+    
+    require(propertyElement, exit);
+    
+    if (*propertyElement) {
+        (*propertyElement)->release ();
+    }
+    element->retain();
+    *propertyElement = element;
+
+exit:
+
+    return (propertyElement != NULL);
+}
+
+
+//====================================================================================================
+// IOHIDEventDriver::parseDeviceOrientationElement
+//====================================================================================================
+bool IOHIDEventDriver::parseDeviceOrientationElement(IOHIDElement * element)
+{
+    UInt32 usagePage    = element->getUsagePage();
+    UInt32 usage        = element->getUsage();
+    bool   store        = false;
+    
+    switch (usagePage) {
+        case kHIDPage_AppleVendorMotion:
+            switch (usage) {
+                case kHIDUsage_AppleVendorMotion_DeviceOrientationTypeAmbiguous:
+                case kHIDUsage_AppleVendorMotion_DeviceOrientationTypePortrait:
+                case kHIDUsage_AppleVendorMotion_DeviceOrientationTypePortraitUpsideDown:
+                case kHIDUsage_AppleVendorMotion_DeviceOrientationTypeLandscapeLeft:
+                case kHIDUsage_AppleVendorMotion_DeviceOrientationTypeLandscapeRight:
+                case kHIDUsage_AppleVendorMotion_DeviceOrientationTypeFaceUp:
+                case kHIDUsage_AppleVendorMotion_DeviceOrientationTypeFaceDown:
+                    store = true;
+            }
+            break;
+        default:
+            break;
+    }
+    
+    require(store, exit);
+    
+    if (!_orientation.elements) {
+        _orientation.elements = OSArray::withCapacity(7);
+        require(_orientation.elements, exit);
+    }
+    
+    _orientation.elements->setObject(element);
+    
+exit:
+    return store;
 }
 
 //====================================================================================================
@@ -1849,11 +2403,6 @@ bool IOHIDEventDriver::parseBiometricElement(IOHIDElement * element)
     UInt32 usagePage    = element->getUsagePage();
     UInt32 usage        = element->getUsage();
     bool   store        = false;
-    
-    if (!_biometric.elements) {
-        _biometric.elements = OSArray::withCapacity(4);
-        require(_biometric.elements, exit);
-    }
     
     switch (usagePage) {
         case kHIDPage_Sensor:
@@ -1867,6 +2416,12 @@ bool IOHIDEventDriver::parseBiometricElement(IOHIDElement * element)
     }
     
     require(store, exit);
+    
+    if (!_biometric.elements) {
+        _biometric.elements = OSArray::withCapacity(4);
+        require(_biometric.elements, exit);
+    }
+    
     _biometric.elements->setObject(element);
     
 exit:
@@ -1929,8 +2484,8 @@ UInt32 IOHIDEventDriver::checkGameControllerElement(IOHIDElement * element)
             break;
             
         case kHIDPage_Game:
-            if (usage == kHIDUsage_Game_GamepadFormFitting) {
-                base = kHIDUsage_Game_GamepadFormFitting;
+            if (usage == kHIDUsage_Game_GamepadFormFitting || usage == kHIDUsage_Game_GamepadFormFitting_Compatibility) {
+                base = kHIDUsage_Game_GamepadFormFitting_Compatibility;
                 offset = 24;
             }
             
@@ -2041,7 +2596,7 @@ void IOHIDEventDriver::handleInterruptReport (
   
     IOHID_DEBUG(kIOHIDDebugCode_InturruptReport, reportType, reportID, getRegistryEntryID(), 0);
   
-    handleVendorMessageReport(timeStamp, report, reportID, kIOParseVendorMessageReport);
+    handleVendorMessageReport(timeStamp, report, reportID, kIOHandleChildVendorMessageReport);
   
     handleBootPointingReport(timeStamp, report, reportID);
     handleRelativeReport(timeStamp, reportID);
@@ -2052,8 +2607,13 @@ void IOHIDEventDriver::handleInterruptReport (
     handleKeboardReport(timeStamp, reportID);
     handleUnicodeReport(timeStamp, reportID);
     handleBiometricReport(timeStamp, reportID);
+    handleAccelReport(timeStamp, reportID);
+    handleGyroReport (timeStamp, reportID);
+    handleCompassReport (timeStamp, reportID);
+    handleTemperatureReport (timeStamp, reportID);
+    handleDeviceOrientationReport (timeStamp, reportID);
 
-    handleVendorMessageReport(timeStamp, report, reportID, kIODispatchVendorMessageReport);
+    handleVendorMessageReport(timeStamp, report, reportID, kIOHandlePrimaryVendorMessageReport);
 
 }
 
@@ -3138,42 +3698,69 @@ IOHIDEvent * IOHIDEventDriver::handleUnicodeGestureCandidateReport(EventElementC
 }
 #endif
 
+
 //====================================================================================================
 // IOHIDEventDriver::handleVendorMessageReport
 //====================================================================================================
 void IOHIDEventDriver::handleVendorMessageReport(AbsoluteTime timeStamp,  IOMemoryDescriptor * report __unused, UInt32 reportID, int phase) {
-    if (_vendorMessage.elements) {
-        if (phase == kIOParseVendorMessageReport) {
-            //Prepare events and defer to be dispatched as child events
-            for (unsigned int index = 0; index < _vendorMessage.elements->getCount(); index++) {
-                if (!_vendorMessage.pendingEvents){
-                    _vendorMessage.pendingEvents = OSArray::withCapacity (_vendorMessage.elements->getCount());
-                    if (_vendorMessage.pendingEvents == NULL) {
-                        break;
+    
+    if (phase == kIOHandleChildVendorMessageReport) {
+        require_quiet (_vendorMessage.childElements,  exit);
+        //Prepare events and defer to be dispatched as child events
+        for (unsigned int index = 0; index < _vendorMessage.childElements->getCount(); index++) {
+            if (!_vendorMessage.pendingEvents){
+                _vendorMessage.pendingEvents = OSArray::withCapacity (_vendorMessage.childElements->getCount());
+                if (_vendorMessage.pendingEvents == NULL) {
+                    break;
+                }
+            }
+            IOHIDElement * currentElement = OSDynamicCast(IOHIDElement, _vendorMessage.childElements->getObject(index));
+            if (currentElement && currentElement->getReportID() == reportID) {
+                OSData *value = currentElement->getDataValue();
+                if (value && value->getLength()) {
+                    const void *data = value->getBytesNoCopy();
+                    unsigned int dataLength = value->getLength();
+                    IOHIDEvent * event = IOHIDEvent::vendorDefinedEvent(
+                                                                        timeStamp,
+                                                                        currentElement->getUsagePage(),
+                                                                        currentElement->getUsage(),
+                                                                        0,
+                                                                        (UInt8*)data,
+                                                                        dataLength
+                                                                        );
+                    if (event) {
+                        _vendorMessage.pendingEvents->setObject(event);
+                        event->release();
                     }
                 }
-                IOHIDElement * currentElement = OSDynamicCast(IOHIDElement, _vendorMessage.elements->getObject(index));
+            }
+        }
+    } else if (phase == kIOHandlePrimaryVendorMessageReport) {
+        if (_vendorMessage.primaryElements) {
+            for (unsigned int index = 0; index < _vendorMessage.primaryElements->getCount(); index++) {
+                IOHIDElement * currentElement = OSDynamicCast(IOHIDElement, _vendorMessage.primaryElements->getObject(index));
                 if (currentElement && currentElement->getReportID() == reportID) {
                     OSData *value = currentElement->getDataValue();
                     if (value && value->getLength()) {
                         const void *data = value->getBytesNoCopy();
                         unsigned int dataLength = value->getLength();
                         IOHIDEvent * event = IOHIDEvent::vendorDefinedEvent(
-                                                          timeStamp,
-                                                          currentElement->getUsagePage(),
-                                                          currentElement->getUsage(),
-                                                          0,
-                                                          (UInt8*)data,
-                                                          dataLength
-                                                          );
+                                                                            timeStamp,
+                                                                            currentElement->getUsagePage(),
+                                                                            currentElement->getUsage(),
+                                                                            0,
+                                                                            (UInt8*)data,
+                                                                            dataLength
+                                                                            );
                         if (event) {
-                            _vendorMessage.pendingEvents->setObject(event);
+                            dispatchEvent (event);
                             event->release();
                         }
                     }
                 }
             }
-        } else if (_vendorMessage.pendingEvents && _vendorMessage.pendingEvents->getCount()) {
+        }
+        if (_vendorMessage.pendingEvents && _vendorMessage.pendingEvents->getCount()) {
             //Events where not dispatched as child events  dispatch them as individual events.
             OSArray * pendingEvents = OSArray::withArray(_vendorMessage.pendingEvents);
             _vendorMessage.pendingEvents->flushCollection();
@@ -3188,6 +3775,8 @@ void IOHIDEventDriver::handleVendorMessageReport(AbsoluteTime timeStamp,  IOMemo
             }
         }
     }
+exit:
+    return;
 }
 
 //====================================================================================================
@@ -3255,6 +3844,388 @@ void IOHIDEventDriver::handleBiometricReport(AbsoluteTime timeStamp, UInt32 repo
     }
     
 exit:
+    return;
+}
+
+//====================================================================================================
+// IOHIDEventDriver::handleAccelReport
+//====================================================================================================
+void IOHIDEventDriver::handleAccelReport(AbsoluteTime timeStamp, UInt32 reportID)
+{
+    IOFixed         x = 0;
+    IOFixed         y = 0;
+    IOFixed         z = 0;
+    UInt32          generation = 0;
+    UInt32          type = 0;
+    UInt32          subType = 0;
+    bool            valid = false;
+    UInt32          index;
+    UInt32          count;
+
+    require_quiet(_accel.elements, exit);
+    
+    for (index = 0, count = _accel.elements->getCount(); index < count; index++) {
+        
+        IOHIDElement *  element;
+        AbsoluteTime    elementTimeStamp;
+        UInt32          usagePage;
+        UInt32          usage;
+        UInt32          value;
+        bool            elementValid;
+        
+
+        element = OSDynamicCast(IOHIDElement, _accel.elements->getObject(index));
+        
+        if (element->getReportID() != reportID) {
+            continue;
+        }
+  
+        elementTimeStamp = element->getTimeStamp();
+        elementValid     = (CMP_ABSOLUTETIME(&timeStamp, &elementTimeStamp) != 0);
+        usagePage   = element->getUsagePage();
+        usage       = element->getUsage();
+        value       = element->getValue();
+        
+        switch (usagePage) {
+            case kHIDPage_Sensor:
+                switch (usage) {
+                    case kHIDUsage_Snsr_Data_Motion_AccelerationAxisX:
+                        x = element->getScaledFixedValue (kIOHIDValueScaleTypeExponent);
+                        valid|=elementValid;
+                    break;
+                    case kHIDUsage_Snsr_Data_Motion_AccelerationAxisY:
+                        y = element->getScaledFixedValue (kIOHIDValueScaleTypeExponent);
+                        valid|=elementValid;
+                        break;
+                    case kHIDUsage_Snsr_Data_Motion_AccelerationAxisZ:
+                        z = element->getScaledFixedValue (kIOHIDValueScaleTypeExponent);
+                        valid|=elementValid;
+                        break;
+                    default:
+                        break;
+                }
+                break;
+            case kHIDPage_AppleVendorMotion:
+                switch (usage) {
+                    case kHIDUsage_AppleVendorMotion_Type:
+                        type = element->getValue();
+                        valid|=elementValid;
+                        break;
+                    case kHIDUsage_AppleVendorMotion_Path:
+                        subType = element->getValue();
+                        valid|=elementValid;
+                        break;
+                    case kHIDUsage_AppleVendorMotion_Generation:
+                        generation = element->getValue();
+                        valid|=elementValid;
+                        break;
+                }
+                break;
+            default:
+                break;
+        }
+        
+  
+    }
+    
+    if (valid) {
+        IOHIDEvent * event = IOHIDEvent::accelerometerEvent(timeStamp, x, y, z, type, subType, generation, 0);
+        if (event) {
+            dispatchEvent(event);
+            event->release();
+        }
+    }
+exit:
+    return;
+}
+
+//====================================================================================================
+// IOHIDEventDriver::handleGyroReport
+//====================================================================================================
+void IOHIDEventDriver::handleGyroReport(AbsoluteTime timeStamp, UInt32 reportID)
+{
+    IOFixed         x = 0;
+    IOFixed         y = 0;
+    IOFixed         z = 0;
+    UInt32          generation = 0;
+    UInt32          type = 0;
+    UInt32          subType = 0;
+    bool            valid = false;
+    UInt32          index;
+    UInt32          count;
+    
+    require_quiet(_gyro.elements, exit);
+    
+    for (index = 0, count = _gyro.elements->getCount(); index < count; index++) {
+        
+        IOHIDElement *  element;
+        AbsoluteTime    elementTimeStamp;
+        UInt32          usagePage;
+        UInt32          usage;
+        UInt32          value;
+        bool            elementValid;
+
+        element = OSDynamicCast(IOHIDElement, _gyro.elements->getObject(index));
+        
+        if (element->getReportID() != reportID) {
+            continue;
+        }
+        
+        elementTimeStamp = element->getTimeStamp();
+        elementValid     = (CMP_ABSOLUTETIME(&timeStamp, &elementTimeStamp) != 0);
+        usagePage   = element->getUsagePage();
+        usage       = element->getUsage();
+        value       = element->getValue();
+        
+        
+        switch (usagePage) {
+            case kHIDPage_Sensor:
+                switch (usage) {
+                    case kHIDUsage_Snsr_Data_Motion_AngularVelocityXAxis:
+                        x = element->getScaledFixedValue (kIOHIDValueScaleTypeExponent);
+                        valid |= elementValid;
+                        break;
+                    case kHIDUsage_Snsr_Data_Motion_AngularVelocityYAxis:
+                        y = element->getScaledFixedValue (kIOHIDValueScaleTypeExponent);
+                        valid |= elementValid;
+                        break;
+                    case kHIDUsage_Snsr_Data_Motion_AngularVelocityZAxis:
+                        z = element->getScaledFixedValue (kIOHIDValueScaleTypeExponent);
+                        valid |= elementValid;
+                        break;
+                    default:
+                        break;
+                }
+                break;
+            case kHIDPage_AppleVendorMotion:
+                switch (usage) {
+                    case kHIDUsage_AppleVendorMotion_Type:
+                        type = element->getValue();
+                        valid |= elementValid;
+                        break;
+                    case kHIDUsage_AppleVendorMotion_Path:
+                        subType = element->getValue();
+                        valid |= elementValid;
+                        break;
+                    case kHIDUsage_AppleVendorMotion_Generation:
+                        generation = element->getValue();
+                        valid |= elementValid;
+                        break;
+                }
+                break;
+            default:
+                break;
+        }
+    }
+    
+    if (valid) {
+        IOHIDEvent * event = IOHIDEvent::gyroEvent (timeStamp, x, y, z, type, subType, generation, 0);
+        if (event) {
+            dispatchEvent(event);
+            event->release();
+        }
+    }
+exit:
+    return;
+}
+
+//====================================================================================================
+// IOHIDEventDriver::handleCompassReport
+//====================================================================================================
+void IOHIDEventDriver::handleCompassReport(AbsoluteTime timeStamp, UInt32 reportID)
+{
+    IOFixed         x = 0;
+    IOFixed         y = 0;
+    IOFixed         z = 0;
+    UInt32          generation = 0;
+    UInt32          type = 0;
+    UInt32          subType = 0;
+    bool            valid = false;
+    UInt32          index;
+    UInt32          count;
+    
+    require_quiet(_compass.elements, exit);
+    
+    for (index = 0, count = _compass.elements->getCount(); index < count; index++) {
+        
+        IOHIDElement *  element;
+        AbsoluteTime    elementTimeStamp;
+        UInt32          usagePage;
+        UInt32          usage;
+        UInt32          value;
+        bool            elementValid;
+        
+        element = OSDynamicCast(IOHIDElement, _compass.elements->getObject(index));
+        
+        if (element->getReportID() != reportID) {
+            continue;
+        }
+        
+        elementTimeStamp = element->getTimeStamp();
+        elementValid     = (CMP_ABSOLUTETIME(&timeStamp, &elementTimeStamp) != 0);
+        usagePage   = element->getUsagePage();
+        usage       = element->getUsage();
+        value       = element->getValue();
+        
+        switch (usagePage) {
+            case kHIDPage_Sensor:
+                switch (usage) {
+                    case kHIDUsage_Snsr_Data_Orientation_MagneticFluxXAxis:
+                        x = element->getScaledFixedValue (kIOHIDValueScaleTypeExponent);
+                        valid |= elementValid;
+                        break;
+                    case kHIDUsage_Snsr_Data_Orientation_MagneticFluxYAxis:
+                        y = element->getScaledFixedValue (kIOHIDValueScaleTypeExponent);
+                        valid |= elementValid;
+                        break;
+                    case kHIDUsage_Snsr_Data_Orientation_MagneticFluxZAxis:
+                        z = element->getScaledFixedValue (kIOHIDValueScaleTypeExponent);
+                        valid |= elementValid;
+                        break;
+                    default:
+                        break;
+                }
+                break;
+            case kHIDPage_AppleVendorMotion:
+                switch (usage) {
+                    case kHIDUsage_AppleVendorMotion_Type:
+                        type = element->getValue();
+                        valid |= elementValid;
+                        break;
+                    case kHIDUsage_AppleVendorMotion_Path:
+                        subType = element->getValue();
+                        valid |= elementValid;
+                        break;
+                    case kHIDUsage_AppleVendorMotion_Generation:
+                        generation = element->getValue();
+                        valid |= elementValid;
+                        break;
+                }
+                break;
+            default:
+                break;
+        }
+    }
+    
+    if (valid) {
+        IOHIDEvent * event = IOHIDEvent::compassEvent(timeStamp, x, y, z, type, subType, generation, 0);
+        if (event) {
+            dispatchEvent(event);
+            event->release();
+        }
+    }
+exit:
+    return;
+}
+
+
+//====================================================================================================
+// IOHIDEventDriver::handleTemperatureReport
+//====================================================================================================
+void IOHIDEventDriver::handleTemperatureReport(AbsoluteTime timeStamp, UInt32 reportID)
+{
+    IOFixed         temperature = 0;
+    UInt32          index;
+    UInt32          count;
+    bool            valid = false;
+    
+    require_quiet(_temperature.elements, exit);
+    //@todo array does not make sence here unless event carry identification of temperature source
+    for (index = 0, count = _temperature.elements->getCount(); index < count; index++) {
+        
+        IOHIDElement *  element;
+        AbsoluteTime    elementTimeStamp;
+        UInt32          usagePage;
+        UInt32          usage;
+        UInt32          value;
+        bool            elementValid;
+        
+        element = OSDynamicCast(IOHIDElement, _temperature.elements->getObject(index));
+        
+        if (element->getReportID() != reportID) {
+            continue;
+        }
+        
+        elementTimeStamp = element->getTimeStamp();
+        elementValid     = (CMP_ABSOLUTETIME(&timeStamp, &elementTimeStamp) != 0);
+        usagePage   = element->getUsagePage();
+        usage       = element->getUsage();
+        value       = element->getValue();
+        
+        switch (usagePage) {
+            case kHIDPage_Sensor:
+                switch (usage) {
+                    case kHIDUsage_Snsr_Environmental_Temperature:
+                        temperature = element->getScaledFixedValue (kIOHIDValueScaleTypeExponent);
+                        valid |= elementValid;
+                        break;
+                    default:
+                        break;
+                }
+                break;
+            default:
+                break;
+        }
+    }
+    
+    if (valid) {
+        IOHIDEvent * event = IOHIDEvent::temperatureEvent(timeStamp, temperature, 0);
+        if (event) {
+            dispatchEvent(event);
+            event->release();
+        }
+    }
+exit:
+    return;
+}
+
+
+//====================================================================================================
+// IOHIDEventDriver::handleTemperatureReport
+//====================================================================================================
+void IOHIDEventDriver::handleDeviceOrientationReport(AbsoluteTime timeStamp, UInt32 reportID)
+{
+    UInt32      index;
+    UInt32      count;
+    
+    require_quiet(_orientation.elements, exit);
+    
+    for (index = 0, count = _orientation.elements->getCount(); index < count; index++) {
+        IOHIDElement *  element;
+        AbsoluteTime    elementTimeStamp;
+        UInt32          usagePage, usage, value, preValue;
+        
+        element = OSDynamicCast(IOHIDElement, _orientation.elements->getObject(index));
+        
+        if (element->getReportID() != reportID) {
+            continue;
+        }
+        
+        elementTimeStamp = element->getTimeStamp();
+        if (CMP_ABSOLUTETIME(&timeStamp, &elementTimeStamp) != 0) {
+            continue;
+        }
+        
+        preValue    = element->getValue(kIOHIDValueOptionsFlagPrevious) != 0;
+        value       = element->getValue() != 0;
+        
+        if ( value && !preValue ) {
+        
+            usagePage   = element->getUsagePage();
+            usage       = element->getUsage();
+            
+            IOHIDEvent * event = IOHIDEvent::orientationEvent (timeStamp, kIOHIDOrientationTypeCMUsage);
+            if (event) {
+                event->setIntegerValue (kIOHIDEventFieldOrientationDeviceOrientationUsage, usage);
+                dispatchEvent(event);
+                event->release();
+            }
+            break;
+        }
+    }
+    
+exit:
+    
     return;
 }
 

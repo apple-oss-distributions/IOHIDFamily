@@ -44,6 +44,8 @@ enum IOHIDEventServiceFastPathUserClientCopySpecType {
 #include <IOKit/IOUserClient.h>
 #include "IOHIDEventService.h"
 #include <IOKit/IOCommandGate.h>
+#include <IOKit/IOBufferMemoryDescriptor.h>
+
 
 class IOHIDEventServiceQueue;
 
@@ -65,10 +67,12 @@ private:
 
     IOHIDEventService *         _owner;
     void *                      _clientContext;
-    IOHIDEventServiceQueue *    _queue;
+    IOBufferMemoryDescriptor *  _buffer;
     IOCommandGate *             _commandGate;
-    volatile uint32_t           _state;
+    volatile uint32_t           _opened;
     IOOptionBits                _options;
+    IOLock *                    _lock;
+    bool                        _fastPathEntitlement;
     
     static IOReturn _open (IOHIDEventServiceFastPathUserClient * target, void * reference, IOExternalMethodArguments * arguments);
     static IOReturn _close (IOHIDEventServiceFastPathUserClient *  target, void * reference, IOExternalMethodArguments * arguments);
@@ -85,6 +89,7 @@ protected:
     virtual IOService * getService (void);
 
     virtual IOReturn clientMemoryForType(UInt32 type, IOOptionBits * options, IOMemoryDescriptor ** memory);
+    
     IOReturn clientMemoryForTypeGated (IOOptionBits * options, IOMemoryDescriptor ** memory);
 
     virtual IOReturn externalMethod (
@@ -94,22 +99,18 @@ protected:
                         OSObject *                      target,
                         void *                          reference
                         );
+    
     IOReturn externalMethodGated(ExternalMethodGatedArguments *arguments);
-
+    
     IOReturn open(IOOptionBits options, OSDictionary * properties);
     
-
-    IOHIDEvent * copyEvent(OSObject * copySpec, IOOptionBits options = 0);
+    IOReturn copyEvent(OSObject * copySpec, IOOptionBits options = 0);
     
     IOReturn setPropertiesGated (OSObject * properties) ;
+    
     void copyPropertyGated (const char * aKey, OSObject **result) const;
     
-    enum {
-        kStateClosing = 0x80000000,
-        kStateOpen    = 0x40000000
-    };
-    
-    bool isOpened () const;
+    uint32_t getSharedMemorySize ();
     
 public:
     

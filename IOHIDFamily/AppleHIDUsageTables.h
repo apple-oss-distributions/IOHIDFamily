@@ -1,5 +1,4 @@
 /*
- *
  * @APPLE_LICENSE_HEADER_START@
  * 
  * Copyright (c) 1999-2003 Apple Computer, Inc.  All Rights Reserved.
@@ -21,25 +20,3 @@
  * 
  * @APPLE_LICENSE_HEADER_END@
  */
-
-#ifndef _IOKIT_HID_IOHIDEVENTSYSTEMQUEUE_H
-#define _IOKIT_HID_IOHIDEVENTSYSTEMQUEUE_H
-
-#include <IOKit/IOSharedDataQueue.h>
-
-//---------------------------------------------------------------------------
-class IOHIDEventSystemQueue: public IOSharedDataQueue
-{
-    OSDeclareDefaultStructors( IOHIDEventSystemQueue )
-    
-    bool _didSendNotificationForLastEnqueue;
-    
-protected:
-    virtual void sendDataAvailableNotification();
-    
-public:
-    virtual Boolean enqueue(void *data, UInt32 dataSize);
-};
-
-//---------------------------------------------------------------------------
-#endif /* !_IOKIT_HID_IOHIDEVENTSYSTEMQUEUE_H */
