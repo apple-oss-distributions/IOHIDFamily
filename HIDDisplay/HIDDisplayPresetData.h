@@ -1,22 +1,22 @@
 //
-//  HIDDisplayDevicePreset.h
+//  HIDDisplayPresetData.h
 //  IOHIDFamily
 //
 //  Created by AB on 1/10/19.
 //
 
-#ifndef HIDDisplayDevicePreset_h
-#define HIDDisplayDevicePreset_h
+#ifndef HIDDisplayPresetData_h
+#define HIDDisplayPresetData_h
 
 #import <Foundation/Foundation.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
-@interface HIDDisplayDevicePreset : NSObject
+@interface HIDDisplayPresetData : NSObject
 
 @property(readonly) BOOL valid;
 @property(readonly) BOOL writable;
-@property(readonly,nullable) NSString* uniqueID;
+@property(readonly,nullable) NSData* uniqueID;
 
 -(instancetype) init NS_UNAVAILABLE;
 /*!
@@ -38,4 +38,4 @@ NS_ASSUME_NONNULL_BEGIN
 
 NS_ASSUME_NONNULL_END
 
-#endif /* HIDDisplayDevicePreset_h */
+#endif /* HIDDisplayPresetData_h */

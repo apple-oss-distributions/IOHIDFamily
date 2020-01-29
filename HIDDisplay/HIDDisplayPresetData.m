@@ -1,25 +1,26 @@
 //
-//  HIDDisplayDevicePreset.m
+//  HIDDisplayPresetData.m
 //  HIDDisplay
 //
 //  Created by AB on 1/10/19.
 //
 
-#import "HIDDisplayDevicePreset.h"
+#import "HIDDisplayPresetData.h"
 #import "HIDElement.h"
-#import "HIDDisplayDevicePrivate.h"
-#import "HIDDisplayDevicePresetPrivate.h"
+#import "HIDDisplayPresetInterfacePrivate.h"
+#import "HIDDisplayInterfacePrivate.h"
+#import "HIDDisplayPresetDataPrivate.h"
 #import "HIDDisplayPrivate.h"
 #import <IOKit/hid/AppleHIDUsageTables.h>
 #import <IOKit/IOReturn.h>
 
-@implementation HIDDisplayDevicePreset
+@implementation HIDDisplayPresetData
 {
     NSInteger _index; // will expose if it has use case
-    __weak HIDDisplayDevice *_deviceRef;
+    __weak HIDDisplayPresetInterface *_deviceRef;
 }
 
--(nullable instancetype) initWithDisplayDevice:(HIDDisplayDevice*) hidDisplay index:(NSInteger) index
+-(nullable instancetype) initWithDisplayDevice:(HIDDisplayPresetInterface*) hidDisplay index:(NSInteger) index
 {
     self = [super init];
     if (!self) {
@@ -32,19 +33,19 @@
     return self;
 }
 
--(HIDDisplayDevice*) hidDisplay
+-(HIDDisplayPresetInterface*) hidDisplay
 {
     return _deviceRef;
 }
 
--(void) setHidDisplay:(HIDDisplayDevice*) device
+-(void) setHidDisplay:(HIDDisplayPresetInterface*) device
 {
     _deviceRef = device;
 }
 
 -(BOOL) valid
 {
-    __strong HIDDisplayDevice *hidDisplay = self.hidDisplay;
+    __strong HIDDisplayPresetInterface *hidDisplay = self.hidDisplay;
     if (!hidDisplay) {
         return NO;
     }
@@ -74,7 +75,7 @@
 
 -(BOOL) writable
 {
-    __strong HIDDisplayDevice *hidDisplay = self.hidDisplay;
+    __strong HIDDisplayPresetInterface *hidDisplay = self.hidDisplay;
     if (!hidDisplay) {
         return NO;
     }
@@ -105,7 +106,7 @@
     NSMutableDictionary *ret = [[NSMutableDictionary alloc] init];
     NSMutableArray *transactionElements = [[NSMutableArray alloc] init];
     
-    __strong HIDDisplayDevice *hidDisplay = self.hidDisplay;
+    __strong HIDDisplayPresetInterface *hidDisplay = self.hidDisplay;
     if (!hidDisplay) {
         if (error) {
             *error = [[NSError alloc] initWithDomain:NSOSStatusErrorDomain code:kIOReturnInvalid userInfo:nil];
@@ -176,7 +177,7 @@
                 ret[(__bridge NSString*)kHIDDisplayPresetFieldDataBlockTwoKey] = element.dataValue;
                 break;
             case kHIDUsage_AppleVendorDisplayPresetUniqueID:
-                ret[(__bridge NSString*)kHIDDisplayPresetUniqueIDKey] = [NSString stringWithUTF8String:[element.dataValue bytes]];
+                ret[(__bridge NSString*)kHIDDisplayPresetUniqueIDKey] = element.dataValue;
                 break;
             default:
                 break;
@@ -193,7 +194,7 @@
     __block NSMutableArray *transactionElements = [[NSMutableArray alloc] init];
     __block BOOL ret = YES;
     
-    __strong HIDDisplayDevice *hidDisplay = self.hidDisplay;
+    __strong HIDDisplayPresetInterface *hidDisplay = self.hidDisplay;
     if (!hidDisplay) {
         if (error) {
             *error = [[NSError alloc] initWithDomain:NSOSStatusErrorDomain code:kIOReturnInvalid userInfo:nil];
@@ -280,8 +281,8 @@
             
             HIDElement *presetUniqueIDElement = [hidDisplay getHIDElementForUsage:kHIDUsage_AppleVendorDisplayPresetUniqueID];
             
-            if (presetUniqueIDElement && [obj isKindOfClass:[NSString class]]) {
-                presetUniqueIDElement.dataValue = [(NSString*)obj dataUsingEncoding:NSUTF8StringEncoding];
+            if (presetUniqueIDElement && [obj isKindOfClass:[NSData class]]) {
+                presetUniqueIDElement.dataValue = obj;
                 [transactionElements addObject:presetUniqueIDElement];
             }
             
@@ -301,9 +302,9 @@
     return ret;
 }
 
--(nullable NSString*) uniqueID
+-(nullable NSData*) uniqueID
 {
-    __strong HIDDisplayDevice *hidDisplay = self.hidDisplay;
+    __strong HIDDisplayPresetInterface *hidDisplay = self.hidDisplay;
     if (!hidDisplay) {
         return nil;
     }
@@ -324,7 +325,7 @@
     }
     
     if ([hidDisplay extract:@[presetUniqueIDElement] error:nil]) {
-        return [NSString stringWithUTF8String:[presetUniqueIDElement.dataValue bytes]];
+        return presetUniqueIDElement.dataValue;
     }
     
     return nil;
