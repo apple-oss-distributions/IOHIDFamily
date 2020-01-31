@@ -16,5 +16,14 @@
 	<true/>
 	<key>com.apple.iohideventsystem.server</key>
 	<true/>
+	<key>com.apple.bluetooth.nsxpc</key>
+	<true/>
+	<key>com.apple.hid.manager.user-access-device</key>
+	<true/>
+	<key>com.apple.private.tcc.allow</key>
+	<array>
+		<string>kTCCServiceListenEvent</string>
+		<string>kTCCServicePostEvent</string>
+	</array>
 </dict>
 </plist>

@@ -26,8 +26,14 @@
 #include <sys/proc.h>
 #include <TargetConditionals.h>
 #include <os/overflow.h>
+#include <IOKit/IOKitKeys.h>
 
 #define kIOHIDManagerUserAccessUserDeviceEntitlement "com.apple.hid.manager.user-access-device"
+#define kIOHIDVirtualDeviceEntitlement "com.apple.developer.hid.virtual.device"
+
+enum {
+    kIOHIDUserDeviceCreateOptionStartWhenScheduled = (1<<0)
+};
 
 #ifdef enqueue
     #undef enqueue
@@ -36,6 +42,7 @@
 #include "IOHIDResourceUserClient.h"
 #include <libkern/OSAtomic.h>
 #include "IOHIDDebug.h"
+#include "IOHIDPrivateKeys.h"
 #include "IOHIDFamilyTrace.h"
 
 #define kHIDClientTimeoutUS     1000000ULL
@@ -54,7 +61,7 @@ OSDefineMetaClassAndStructors( IOHIDResourceDeviceUserClient, IOUserClient )
 const IOExternalMethodDispatch IOHIDResourceDeviceUserClient::_methods[kIOHIDResourceDeviceUserClientMethodCount] = {
     {   // kIOHIDResourceDeviceUserClientMethodCreate
         (IOExternalMethodAction) &IOHIDResourceDeviceUserClient::_createDevice,
-        1, -1, /* 1 struct input : the report descriptor */
+        1, kIOUCVariableStructureSize, /* 1 struct input : the report descriptor */
         0, 0
     },
     {   // kIOHIDResourceDeviceUserClientMethodTerminate
@@ -64,14 +71,19 @@ const IOExternalMethodDispatch IOHIDResourceDeviceUserClient::_methods[kIOHIDRes
     },
     {   // kIOHIDResourceDeviceUserClientMethodHandleReport
         (IOExternalMethodAction) &IOHIDResourceDeviceUserClient::_handleReport,
-        1, -1, /* 1 struct input : the buffer */
+        1, kIOUCVariableStructureSize, /* 1 struct input : the buffer */
         0, 0
     },
     {   // kIOHIDResourceDeviceUserClientMethodPostReportResult
         (IOExternalMethodAction) &IOHIDResourceDeviceUserClient::_postReportResult,
-        kIOHIDResourceUserClientResponseIndexCount, -1, /* 1 scalar input: the result, 1 struct input : the buffer */
+        kIOHIDResourceUserClientResponseIndexCount, kIOUCVariableStructureSize, /* 1 scalar input: the result, 1 struct input : the buffer */
         0, 0
-    }
+    },
+    {   // kIOHIDResourceDeviceUserClientMethodRegisterService
+        (IOExternalMethodAction) &IOHIDResourceDeviceUserClient::_registerService,
+        0, 0,
+        0, 0
+    },
 };
 
 
@@ -82,24 +94,36 @@ const IOExternalMethodDispatch IOHIDResourceDeviceUserClient::_methods[kIOHIDRes
 bool IOHIDResourceDeviceUserClient::initWithTask(task_t owningTask, void * security_id, UInt32 type)
 {
     bool result = false;
+    OSObject* entitlement = NULL;
     
-    OSObject* entitlement = copyClientEntitlement(owningTask, kIOHIDManagerUserAccessUserDeviceEntitlement);
+    require_action(super::initWithTask(owningTask, security_id, type), exit, HIDLogError("failed"));
+    
+    entitlement = copyClientEntitlement(owningTask, kIOHIDManagerUserAccessUserDeviceEntitlement);
     if (entitlement) {
       result = (entitlement == kOSBooleanTrue);
       entitlement->release();
     }
+    
+    // check for developer entitlement
+    if (!result) {
+        entitlement = copyClientEntitlement(owningTask, kIOHIDVirtualDeviceEntitlement);
+        if (entitlement) {
+            result = (entitlement == kOSBooleanTrue);
+            entitlement->release();
+        }
+    } else {
+        _privileged = true;
+    }
+    
     if (!result) {
       proc_t      process;
       process = (proc_t)get_bsdtask_info(owningTask);
       char name[255];
       bzero(name, sizeof(name));
       proc_name(proc_pid(process), name, sizeof(name));
-      HIDLogError("%s is not entitled", name);
+      HIDServiceLogError("%s is not entitled", name);
       goto exit;
     }
- //   require_noerr_action(clientHasPrivilege(owningTask, kIOClientPrivilegeAdministrator), exit, result=false);
-    result = super::initWithTask(owningTask, security_id, type);
-    require_action(result, exit, HIDLogError("failed"));
     
     _pending            = OSSet::withCapacity(4);
     _maxClientTimeoutUS = kHIDClientTimeoutUS;
@@ -238,6 +262,12 @@ IOReturn IOHIDResourceDeviceUserClient::registerNotificationPortGated(mach_port_
     
     _port = port;
     _queue->setNotificationPort(port);
+    
+    // 43101337 clear pending reports when our port is cleared, otherwise we will
+    // wait until the timeout occurs, which could be a very long time.
+    if (!_port && _commandGate) {
+        cleanupPendingReports();
+    }
     
     result = kIOReturnSuccess;
 
@@ -462,13 +492,24 @@ IOReturn IOHIDResourceDeviceUserClient::createDevice(IOExternalMethodArguments *
     
     _properties = OSDynamicCast(OSDictionary, object);
     require_action(_properties, exit, result=kIOReturnNoMemory);
-    
     _properties->retain();
     
-    if ( arguments->scalarInput[0] )
-        result = createAndStartDeviceAsync();
-    else
-        result = createAndStartDevice();
+    if (_properties->getObject(kIOUserClientClassKey) ||
+        _properties->getObject(kIOClassKey) ||
+        _properties->getObject(kIOProviderClassKey) ||
+        _properties->getObject(kIOKitDebugKey)) {
+        result = kIOReturnBadArgument;
+        goto exit;
+    }
+    
+    // add privilege entitlements
+    _properties->setObject("Privileged", _privileged ? kOSBooleanTrue : kOSBooleanFalse);
+    
+    if (arguments->scalarInput[0] & kIOHIDUserDeviceCreateOptionStartWhenScheduled) {
+        _properties->setObject(kIOHIDRegisterServiceKey, kOSBooleanFalse);
+    }
+    
+    result = createAndStartDevice();
     
     require_noerr(result, exit);
 
@@ -621,7 +662,7 @@ IOReturn IOHIDResourceDeviceUserClient::getReportGated(ReportGatedArguments * ar
     IOReturn                        ret;
     OSData *                        retData = NULL;
     
-    require_action(!isInactive(), exit, ret=kIOReturnOffline);
+    require_action(!isInactive() && !_suspended, exit, ret=kIOReturnOffline);
     
     result.descriptor = arguments->report;
     result.token      = _tokenIndex++;
@@ -638,6 +679,7 @@ IOReturn IOHIDResourceDeviceUserClient::getReportGated(ReportGatedArguments * ar
     _pending->setObject(retData);
     
     require_action(_queue, exit, ret = kIOReturnNotReady); // client has not mapped memory
+    require_action(_port, exit, ret = kIOReturnOffline); // client has not registered a port
     
     _getReportCount++;
     
@@ -651,7 +693,7 @@ IOReturn IOHIDResourceDeviceUserClient::getReportGated(ReportGatedArguments * ar
     });
     
     // if we successfully enqueue, let's sleep till we get a result from postReportResult
-    clock_interval_to_deadline(kMicrosecondScale, _maxClientTimeoutUS, &ts);
+    clock_interval_to_deadline(_maxClientTimeoutUS, kMicrosecondScale, &ts);
     
     switch ( _commandGate->commandSleep(retData, ts, THREAD_ABORTSAFE) ) {
         case THREAD_AWAKENED:
@@ -704,7 +746,7 @@ IOReturn IOHIDResourceDeviceUserClient::setReportGated(ReportGatedArguments * ar
     IOReturn                        ret;
     OSData *                        retData = NULL;
     
-    require_action(!isInactive(), exit, ret=kIOReturnOffline);
+    require_action(!isInactive() && !_suspended, exit, ret=kIOReturnOffline);
 
     bzero(&result, sizeof(result));
     
@@ -722,6 +764,7 @@ IOReturn IOHIDResourceDeviceUserClient::setReportGated(ReportGatedArguments * ar
     _pending->setObject(retData);
     
     require_action(_queue, exit, ret = kIOReturnNotReady); // client has not mapped memory
+    require_action(_port, exit, ret = kIOReturnOffline); // client has not registered a port
     
     _setReportCount++;
     
@@ -735,7 +778,7 @@ IOReturn IOHIDResourceDeviceUserClient::setReportGated(ReportGatedArguments * ar
     });
 
     // if we successfully enqueue, let's sleep till we get a result from postReportResult
-    clock_interval_to_deadline(kMicrosecondScale, _maxClientTimeoutUS, (uint64_t *)&ts);
+    clock_interval_to_deadline(_maxClientTimeoutUS, kMicrosecondScale, (uint64_t *)&ts);
     
     switch ( _commandGate->commandSleep(retData, ts, THREAD_ABORTSAFE) ) {
         case THREAD_AWAKENED:
@@ -827,7 +870,7 @@ void IOHIDResourceDeviceUserClient::cleanupPendingReports()
     iterator = OSCollectionIterator::withCollection(_pending);
     if ( !iterator )
         return;
-        
+    
     while ( (object = iterator->getNextObject()) ) {
         __ReportResult * pResult = (__ReportResult*)((OSData*)object)->getBytesNoCopy();
         
@@ -865,6 +908,67 @@ IOReturn IOHIDResourceDeviceUserClient::_terminateDevice(
                                         IOExternalMethodArguments       *arguments __unused)
 {
     return target->terminateDevice();
+}
+
+//------------------------------------------------------------------------------
+// IOHIDResourceDeviceUserClient::_registerService
+//------------------------------------------------------------------------------
+IOReturn IOHIDResourceDeviceUserClient::_registerService(
+                                IOHIDResourceDeviceUserClient *target,
+                                void *reference __unused,
+                                IOExternalMethodArguments *arguments __unused)
+{
+    if (target->_device) {
+        target->_device->registerService();
+        return kIOReturnSuccess;
+    } else {
+        return kIOReturnOffline;
+    }
+}
+
+
+IOReturn IOHIDResourceDeviceUserClient::setProperties(OSObject *properties)
+{
+    IOReturn ret;
+    
+    require_action(!isInactive(), exit, ret = kIOReturnOffline);
+    
+    ret = _commandGate->runAction(OSMemberFunctionCast(IOCommandGate::Action, this, &IOHIDResourceDeviceUserClient::setPropertiesGated), properties);
+    
+exit:
+    return ret;
+}
+
+IOReturn IOHIDResourceDeviceUserClient::setPropertiesGated(OSObject *properties)
+{
+    IOReturn ret = kIOReturnSuccess;
+    OSDictionary *propertyDict = NULL;
+    OSBoolean *suspend = NULL;
+    
+    propertyDict = OSDynamicCast(OSDictionary, properties);
+    require(propertyDict, exit);
+    
+    suspend = OSDynamicCast(OSBoolean, propertyDict->getObject(kIOHIDUserDeviceSuspendKey));
+    
+    if (suspend) {
+        _suspended = suspend->getValue();
+    } else {
+        require_action(_device, exit, ret = kIOReturnOffline);
+        
+        OSCollectionIterator *iterator = OSCollectionIterator::withCollection(propertyDict);
+        OSSymbol *key;
+        
+        require(iterator, exit);
+        
+        while ((key = OSDynamicCast(OSSymbol, iterator->getNextObject()))) {
+            _device->setProperty(key, propertyDict->getObject(key));
+        }
+        
+        iterator->release();
+    }
+    
+exit:
+    return ret;
 }
 
 #define SET_DICT_NUM(dict, key, val) do { \
@@ -1059,13 +1163,28 @@ Boolean IOHIDResourceQueue::enqueueReport(IOHIDResourceDataQueueHeader * header,
         }
     }
 
-    // Update tail with release barrier
+    // Publish the data we just enqueued
     _enqueueTS = mach_continuous_time();
     __c11_atomic_store((_Atomic UInt32 *)&dataQueue->tail, newTail, __ATOMIC_RELEASE);
-    
+
+    if (tail != head) {
+        // From <rdar://problem/43093190> IOSharedDataQueue stalls
+        //
+        // The memory barrier below pairs with the one in ::dequeue
+        // so that either our store to the tail cannot be missed by
+        // the next dequeue attempt, or we will observe the dequeuer
+        // making the queue empty.
+        //
+        // Of course, if we already think the queue is empty,
+        // there's no point paying this extra cost.
+        //
+        __c11_atomic_thread_fence(__ATOMIC_SEQ_CST);
+        head = __c11_atomic_load((_Atomic UInt32 *)&dataQueue->head, __ATOMIC_RELAXED);
+    }
+
     // Send notification (via mach message) that data is available if either the
     // queue was empty prior to enqueue() or queue was emptied during enqueue()
-    if ( ( head == tail ) || ( __c11_atomic_load((_Atomic UInt32 *)&dataQueue->head, __ATOMIC_ACQUIRE) == tail ) ) {
+    if (head == tail) {
         sendDataAvailableNotification();
     }
 

@@ -38,6 +38,10 @@
 #include <IOKit/hidsystem/IOHIDShared.h>
 
 enum {
+    kIOHIDEventDriverDebugSkipGCAuth    = 0x00000001
+};
+
+enum {
     kMouseButtons   = 0x1,
     kMouseXYAxis    = 0x2,
     kBootMouse      = (kMouseXYAxis | kMouseButtons)
@@ -75,6 +79,12 @@ enum {
     } \
 }while (0);
 
+
+#define GAME_CONTROLLER_STANDARD_MASK 0x00000F3F
+#define GAME_CONTROLLER_EXTENDED_MASK (0x000270C0 | GAME_CONTROLLER_STANDARD_MASK)
+#define GAME_CONTROLLER_FORM_FITTING_MASK (0x1000000)
+
+
 //===========================================================================
 // EventElementCollection class
 class EventElementCollection: public OSObject
@@ -86,9 +96,9 @@ public:
     
     static EventElementCollection * candidate(IOHIDElement * parent);
     
-    virtual void free();
+    virtual void free(void) APPLE_KEXT_OVERRIDE;
     virtual OSDictionary * copyProperties() const;
-    virtual bool serialize(OSSerialize * serializer) const;
+    virtual bool serialize(OSSerialize * serializer) const APPLE_KEXT_OVERRIDE;
 };
 
 OSDefineMetaClassAndStructors(EventElementCollection, OSObject)
@@ -163,7 +173,7 @@ public:
   
     static DigitizerTransducer * transducer(uint32_t type, IOHIDElement * parent);
     
-    virtual OSDictionary * copyProperties() const;
+    virtual OSDictionary * copyProperties(void) const APPLE_KEXT_OVERRIDE;
 };
 
 OSDefineMetaClassAndStructors(DigitizerTransducer, EventElementCollection)
@@ -273,6 +283,7 @@ void IOHIDEventDriver::free ()
     OSSafeReleaseNULL(_scroll.elements);
     OSSafeReleaseNULL(_led.elements);
     OSSafeReleaseNULL(_keyboard.elements);
+    OSSafeReleaseNULL(_keyboard.blessedUsagePairs);
     OSSafeReleaseNULL(_unicode.legacyElements);
     OSSafeReleaseNULL(_unicode.gesturesCandidates);
     OSSafeReleaseNULL(_unicode.gestureStateElement);
@@ -287,10 +298,12 @@ void IOHIDEventDriver::free ()
     OSSafeReleaseNULL(_compass.elements);
     OSSafeReleaseNULL(_temperature.elements);
     OSSafeReleaseNULL(_sensorProperty.reportInterval);
+    OSSafeReleaseNULL(_sensorProperty.maxFIFOEvents);
     OSSafeReleaseNULL(_sensorProperty.reportLatency);
     OSSafeReleaseNULL(_sensorProperty.sniffControl);
-    OSSafeReleaseNULL(_orientation.elements);
-    
+    OSSafeReleaseNULL(_orientation.cmElements);
+    OSSafeReleaseNULL(_orientation.tiltElements);
+
     if (_commandGate) {
         if ( _workLoop ) {
             _workLoop->removeEventSource(_commandGate);
@@ -312,89 +325,103 @@ void IOHIDEventDriver::free ()
 //====================================================================================================
 // IOHIDEventDriver::handleStart
 //====================================================================================================
-bool IOHIDEventDriver::handleStart( IOService * provider )
+bool IOHIDEventDriver::handleStart(IOService *provider)
 {
-    _interface = OSDynamicCast( IOHIDInterface, provider );
-
-    if ( !_interface )
-        return false;
-
+    IOService       *service            = this;
+    OSObject        *obj                = NULL;
+    OSArray         *elements           = NULL;
+    OSSerializer    *debugSerializer    = NULL;
+    UInt32          bootProtocol        = 0;
+    bool            result              = false;
+    
+    _interface = OSDynamicCast(IOHIDInterface, provider);
+    require(_interface, exit);
+    
     _workLoop = getWorkLoop();
-    if (!_workLoop) {
-        return false;
-    }
-
+    require(_workLoop, exit);
+    
     _workLoop->retain();
     
     _commandGate = IOCommandGate::commandGate(this);
-    if (!_commandGate || (_workLoop->addEventSource(_commandGate) != kIOReturnSuccess)) {
-        return false;
-    }
-
-
-    IOService * service = this;
-
+    require(_commandGate, exit);
+    require_noerr(_workLoop->addEventSource(_commandGate), exit);
+    
     // Check to see if this is a product of an IOHIDDeviceShim
-    while ( NULL != (service = service->getProvider()) ) {
-        if(service->metaCast("IOHIDDeviceShim") && !service->metaCast("IOHIDPointingEventDevice") && !service->metaCast("IOHIDKeyboardEventDevice")) {
-            return false;
+    while (NULL != (service = service->getProvider())) {
+        if(service->metaCast("IOHIDDeviceShim")) {
+            require(service->metaCast("IOHIDPointingEventDevice") ||
+                    service->metaCast("IOHIDKeyboardEventDevice"), exit);
         }
     }
-
-    if (!_interface->open(this, 0, OSMemberFunctionCast(IOHIDInterface::InterruptReportAction, this, &IOHIDEventDriver::handleInterruptReport), NULL))
-        return false;
-
-    UInt32      bootProtocol    = 0;
-    OSObject *  obj             = _interface->copyProperty("BootProtocol");
-    OSNumber *  number          = OSDynamicCast(OSNumber, obj);
-
-    if (number) {
-      bootProtocol = number->unsigned32BitValue();
-      setProperty("BootProtocol", number);
+    
+    require_action(_interface->open(this, 0, OSMemberFunctionCast(IOHIDInterface::InterruptReportAction,
+                                                           this,
+                                                           &IOHIDEventDriver::handleInterruptReport), NULL), exit,
+                   HIDLogError("0x%llx: IOHIDEventDriver failed to open IOHIDInterface", getRegistryEntryID()));
+    
+    obj = _interface->copyProperty("BootProtocol");
+    
+    if (OSDynamicCast(OSNumber, obj)) {
+        setProperty("BootProtocol", ((OSNumber *)obj)->unsigned32BitValue());
     }
     OSSafeReleaseNULL(obj);
     
-#if TARGET_OS_EMBEDDED
-    obj = _interface->copyProperty(kIOHIDAuthenticatedDeviceKey);
-    OSBoolean *authenticated = OSDynamicCast(OSBoolean, obj);
-    _authenticatedDevice = (authenticated && authenticated == kOSBooleanTrue);
-    OSSafeReleaseNULL(obj);
-    if ((conformTo(kHIDPage_GenericDesktop, kHIDUsage_GD_GamePad) ||
-        conformTo(kHIDPage_GenericDesktop, kHIDUsage_GD_Joystick)) &&
-        _authenticatedDevice == false) {
-        HIDLogError("Un-authenticated game controller device attached");
-        return false;
+#if TARGET_OS_IPHONE
+    uint32_t debug;
+    if (!PE_parse_boot_argn("IOHIDEventDriver-debug", &debug, sizeof (debug))) {
+        debug = 0;
+    }
+    
+    if (debug & kIOHIDEventDriverDebugSkipGCAuth) {
+        _authenticatedDevice = true;
+    } else {
+        obj = _interface->copyProperty(kIOHIDAuthenticatedDeviceKey);
+        _authenticatedDevice = (OSDynamicCast(OSBoolean, obj) && obj == kOSBooleanTrue);
+        OSSafeReleaseNULL(obj);
+        if (conformTo(kHIDPage_GenericDesktop, kHIDUsage_GD_GamePad) ||
+            conformTo(kHIDPage_GenericDesktop, kHIDUsage_GD_Joystick)) {
+            require_action(_authenticatedDevice, exit, HIDLogError("Un-authenticated game controller device attached"));
+        }
     }
 #else
     _authenticatedDevice = true;
 #endif
-
+    
     obj = copyProperty(kIOHIDAbsoluteAxisBoundsRemovalPercentage, gIOServicePlane);
-    number = OSDynamicCast(OSNumber, obj);
-    if ( number ) {
-        _absoluteAxisRemovalPercentage = number->unsigned32BitValue();
+    if (OSDynamicCast(OSNumber, obj)) {
+        _absoluteAxisRemovalPercentage = ((OSNumber *)obj)->unsigned32BitValue();
     }
     OSSafeReleaseNULL(obj);
     
-    OSArray *elements = _interface->createMatchingElements();
-    bool result = false;
-
+    // Get array of blessed vendor keyboard usages.
+    require_action(getBlessedUsagePairs(), exit, HIDLogError("Error parsing the blessed usage pair array!"));
+    
     _keyboard.appleVendorSupported = getProperty(kIOHIDAppleVendorSupported, gIOServicePlane);
-
-    if ( elements ) {
-        if ( parseElements ( elements, bootProtocol )) {
-            result = true;
-        }
+    
+    elements = _interface->createMatchingElements();
+    require(elements, exit);
+    
+    require_action(parseElements(elements, bootProtocol), exit,
+                   HIDLogError("0x%llx: IOHIDEventDriver failed to parse elements.", getRegistryEntryID()));
+    
+    debugSerializer = OSSerializer::forTarget(this, OSMemberFunctionCast(OSSerializerCallback,
+                                                                         this,
+                                                                         &IOHIDEventDriver::serializeDebugState));
+    require(debugSerializer, exit);
+    
+    setProperty("DebugState", debugSerializer);
+    
+    result = true;
+    
+exit:
+    if (!result) {
+        HIDLogError("0x%llx: IOHIDEventDriver start failed.", getRegistryEntryID());
+        provider->close(this);
     }
+    
     OSSafeReleaseNULL(elements);
-
-    OSSerializer * debugStateSerializer = OSSerializer::forTarget(this, OSMemberFunctionCast(OSSerializerCallback, this, &IOHIDEventDriver::serializeDebugState));
-    if (debugStateSerializer) {
-        setProperty("DebugState", debugStateSerializer);
-        debugStateSerializer->release();
-    }
-  
-
+    OSSafeReleaseNULL(debugSerializer);
+    
     return result;
 }
 
@@ -499,6 +526,32 @@ bool IOHIDEventDriver::didTerminate( IOService * provider, IOOptionBits options,
     return super::didTerminate(provider, options, defer);
 }
 
+//==============================================================================
+// IOHIDEventService::getDeviceUsagePairs
+//==============================================================================
+bool IOHIDEventDriver::getBlessedUsagePairs()
+{
+    OSObject *  obj;
+    OSArray *   pairs;
+    bool        ret = false;
+
+    // If there are no blessed pairs, exit with no error.
+    obj = getProperty(kIOHIDEventDriverBlessedUsagePairsKey, gIOServicePlane);
+    require_action_quiet(obj, exit, ret = true);
+
+    pairs = OSDynamicCast(OSArray, obj);
+    require(pairs, exit);
+
+    ret = setProperty(kIOHIDEventDriverBlessedUsagePairsKey, pairs);
+    require(ret, exit);
+
+    _keyboard.blessedUsagePairs = pairs;
+    _keyboard.blessedUsagePairs->retain();
+
+exit:
+    return ret;
+}
+
 //====================================================================================================
 // IOHIDEventDriver::parseElements
 //====================================================================================================
@@ -527,8 +580,13 @@ bool IOHIDEventDriver::parseElements ( OSArray* elementArray, UInt32 bootProtoco
         if ( element->getReportID() != 0 )
             _multipleReports = true;
 
-        if ( element->getType() == kIOHIDElementTypeCollection )
+        if ( element->getType() == kIOHIDElementTypeCollection ) {
+            if (element->getUsagePage() == kHIDPage_Game && element->getUsage() == kHIDUsage_Game_GamepadFormFitting) {
+                _gameController.capable |= GAME_CONTROLLER_FORM_FITTING_MASK;
+            }
+            
             continue;
+        }
         
         if ( element->getUsage() == 0 )
             continue;
@@ -555,7 +613,7 @@ bool IOHIDEventDriver::parseElements ( OSArray* elementArray, UInt32 bootProtoco
         }
         
         if (element->getUsagePage() == kHIDPage_Button) {
-#if !TARGET_OS_EMBEDDED
+#if TARGET_OS_OSX
             IOHIDElement *  parent = element;
             while ((parent = parent->getParentElement()) != NULL) {
                 if (parent->getUsagePage() == kHIDPage_Consumer) {
@@ -764,10 +822,6 @@ exit:
 //====================================================================================================
 // IOHIDEventDriver::processGameControllerElements
 //====================================================================================================
-#define GAME_CONTROLLER_STANDARD_MASK 0x00000F3F
-#define GAME_CONTROLLER_EXTENDED_MASK (0x000270C0 | GAME_CONTROLLER_STANDARD_MASK)
-#define GAME_CONTROLLER_FORM_FITTING_MASK (0x1000000)
-
 void IOHIDEventDriver::processGameControllerElements()
 {
     UInt32 index, count;
@@ -897,7 +951,7 @@ void IOHIDEventDriver::setDigitizerProperties()
 #if TARGET_OS_TV
     _digitizer.collectionDispatch = true;
 #else
-    if (conformTo (kHIDPage_AppleVendor, kHIDUsage_AppleVendor_DFR)) {
+    if (conformTo (kHIDPage_AppleVendor, kHIDUsage_AppleVendor_DFR) || getProperty(kIOHIDDigitizerCollectionDispatchKey, gIOServicePlane) == kOSBooleanTrue) {
         _digitizer.collectionDispatch = true;
     }
 #endif
@@ -1195,6 +1249,11 @@ void IOHIDEventDriver::setSensorProperties()
         sensorPropertyCaps |= kSensorPropertyReportInterval;
     }
 
+    if (_sensorProperty.maxFIFOEvents) {
+        properties->setObject("MaxFIFOEvents", _sensorProperty.maxFIFOEvents);
+        sensorPropertyCaps |= kSensorPropertyMaxFIFOEvents;
+    }
+
     if (_sensorProperty.reportLatency) {
         properties->setObject("ReportLatency", _sensorProperty.reportLatency);
         sensorPropertyCaps |= kSensorPropertyReportLatency;
@@ -1218,17 +1277,29 @@ exit:
 //====================================================================================================
 void IOHIDEventDriver::setDeviceOrientationProperties()
 {
-    OSDictionary *properties = OSDictionary::withCapacity(1);
+    OSArray * elements          = OSArray::withCapacity(1);
+    OSDictionary * properties   = OSDictionary::withCapacity(1);
     
-    require(properties, exit);
-    require(_orientation.elements, exit);
+    require(properties && elements, exit);
     
-    properties->setObject(kIOHIDElementKey, _orientation.elements);
+    if (_orientation.cmElements) {
+        elements->merge (_orientation.cmElements);
+    }
+ 
+    if (_orientation.tiltElements) {
+        elements->merge (_orientation.tiltElements);
+    }
     
-    setProperty("DeviceOrientation", properties);
-    
+    if (elements->getCount()) {
+        properties->setObject(kIOHIDElementKey, elements);
+        setProperty("DeviceOrientation", properties);
+    }
+   
 exit:
+
     OSSafeReleaseNULL(properties);
+    OSSafeReleaseNULL(elements);
+
 }
 
 
@@ -1267,7 +1338,7 @@ bool  IOHIDEventDriver::conformTo (UInt32 usagePage, UInt32 usage) {
 //====================================================================================================
 void IOHIDEventDriver::setAccelerationProperties()
 {
-#if !TARGET_OS_EMBEDDED
+#if TARGET_OS_OSX
     bool        pointer             = false;
     OSArray     *deviceUsagePairs   = getDeviceUsagePairs();
     
@@ -1315,7 +1386,7 @@ void IOHIDEventDriver::setAccelerationProperties()
             }
         }
     }
-#endif /* TARGET_OS_EMBEDDED */
+#endif /* TARGET_OS_OSX */
 }
 
 //====================================================================================================
@@ -1377,6 +1448,12 @@ IOReturn IOHIDEventDriver::setProperties( OSObject * properties )
         });
     }
 
+    if (_sensorProperty.maxFIFOEvents && (numberVal = OSDynamicCast(OSNumber, propertyDict->getObject(kIOHIDSensorPropertyMaxFIFOEventsKey)))) {
+        dispatch_workloop_sync ({
+            _sensorProperty.maxFIFOEvents->setValue(numberVal->unsigned32BitValue());
+        });
+    }
+
     if (_sensorProperty.reportLatency && (numberVal = OSDynamicCast(OSNumber, propertyDict->getObject(kIOHIDBatchIntervalKey)))) {
         dispatch_workloop_sync ({
             _sensorProperty.reportLatency->setValue(numberVal->unsigned32BitValue());
@@ -1424,21 +1501,142 @@ IOHIDEvent * IOHIDEventDriver::copyEvent(IOHIDEventType type, IOHIDEvent * match
             break;
         }
     } else if (type == kIOHIDEventTypeOrientation) {
-        require(_orientation.elements, exit);
-        for (unsigned int index = 0; index < _orientation.elements->getCount(); index++)
-        {
-            IOHIDElement * element = OSDynamicCast(IOHIDElement, _orientation.elements->getObject(index));
-            if (!element->getValue()) {
-                continue;
+        if (_orientation.cmElements) {
+            
+            for (unsigned int index = 0; index < _orientation.cmElements->getCount(); index++)
+            {
+                IOHIDElement * element = OSDynamicCast(IOHIDElement, _orientation.cmElements->getObject(index));
+                if (!element->getValue()) {
+                    continue;
+                }
+                
+                event = IOHIDEvent::orientationEvent(element->getTimeStamp(), kIOHIDOrientationTypeCMUsage);
+                if (event) {
+                    event->setIntegerValue (kIOHIDEventFieldOrientationDeviceOrientationUsage, element->getUsage());
+                }
+                break;
             }
             
-            event = IOHIDEvent::orientationEvent(element->getTimeStamp(), kIOHIDOrientationTypeCMUsage);
-            if (event) {
-                event->setIntegerValue (kIOHIDEventFieldOrientationDeviceOrientationUsage, element->getUsage());
+        } else if (_orientation.tiltElements) {
+            
+            IOFixed tiltX = 0;
+            IOFixed tiltY = 0;
+            IOFixed tiltZ = 0;
+            
+            UInt32  reportID = 0xffffffff;
+  
+            for (unsigned int index = 0; index < _orientation.tiltElements->getCount(); index++) {
+ 
+                IOHIDElement * element = OSDynamicCast(IOHIDElement, _orientation.tiltElements->getObject(index));
+                IOOptionBits opt = (element->getReportID() == reportID) ? 0 : kIOHIDValueOptionsUpdateElementValues;
+                
+                switch (element->getUsage()) {
+                    case kHIDUsage_Snsr_Data_Orientation_TiltXAxis:
+                        tiltX =  element->getScaledFixedValue(kIOHIDValueScaleTypeExponent, opt);
+                        break;
+                    case kHIDUsage_Snsr_Data_Orientation_TiltYAxis:
+                        tiltY =  element->getScaledFixedValue(kIOHIDValueScaleTypeExponent, opt);
+                        break;
+                    case kHIDUsage_Snsr_Data_Orientation_TiltZAxis:
+                        tiltZ =  element->getScaledFixedValue(kIOHIDValueScaleTypeExponent, opt);
+                        break;
+                }
+                
+                reportID = element->getReportID();
+                
+                if (!event) {
+                    event = IOHIDEvent::orientationEvent(element->getTimeStamp(), kIOHIDOrientationTypeTilt);
+                }
             }
+            if (event) {
+                event->setFixedValue(kIOHIDEventFieldOrientationTiltX, tiltX);
+                event->setFixedValue(kIOHIDEventFieldOrientationTiltY, tiltY);
+                event->setFixedValue(kIOHIDEventFieldOrientationTiltZ, tiltZ);
+            }
+        }
+    } else if (type == kIOHIDEventTypeVendorDefined) {
+        require(matching, exit);
+        
+        usagePage   = matching->getIntegerValue(kIOHIDEventFieldVendorDefinedUsagePage);
+        usage       = matching->getIntegerValue(kIOHIDEventFieldVendorDefinedUsage);
+ 
+        __block IOHIDElement * element = NULL;
+        
+        auto visitor = ^bool(OSObject *object) {
+            IOHIDElement * tmpElement = OSDynamicCast(IOHIDElement, object);
+            if (tmpElement && tmpElement->getUsage() == usage && tmpElement->getUsagePage() == usagePage) {
+                element = tmpElement;
+                return true;
+            }
+            return false;
+        };
+        
+        if (_vendorMessage.childElements) {
+            _vendorMessage.childElements->iterateObjects(visitor);
+        }
+
+        if (!element &&_vendorMessage.primaryElements) {
+            _vendorMessage.primaryElements->iterateObjects(visitor);
+        }
+
+        if (element) {
+            OSData * data = element->getDataValue(kIOHIDValueOptionsUpdateElementValues);
+            if (data) {
+                event = IOHIDEvent::vendorDefinedEvent(element->getTimeStamp(),
+                                                       element->getUsagePage(),
+                                                       element->getUsage(),
+                                                       0,
+                                                       (UInt8*) data->getBytesNoCopy(),
+                                                       data->getLength()
+                                                       );
+            } 
+        }
+    }
+    
+exit:
+
+    return event;
+}
+
+IOHIDEvent *IOHIDEventDriver::copyMatchingEvent(OSDictionary *matching)
+{
+    IOHIDEvent *event = NULL;
+    OSNumber *eventTypeNum = NULL;
+    OSNumber *usagePageNum = NULL;
+    OSNumber *usageNum = NULL;
+    uint32_t eventType = 0;
+    uint32_t usagePage = 0;
+    uint32_t usage = 0;
+    
+    require(matching, exit);
+    
+    eventTypeNum = OSDynamicCast(OSNumber, matching->getObject(kIOHIDEventTypeKey));
+    require(eventTypeNum, exit);
+    eventType = eventTypeNum->unsigned32BitValue();
+    
+    usagePageNum = OSDynamicCast(OSNumber, matching->getObject(kIOHIDUsagePageKey));
+    require(usagePageNum, exit);
+    usagePage = usagePageNum->unsigned32BitValue();
+    
+    usageNum = OSDynamicCast(OSNumber, matching->getObject(kIOHIDUsageKey));
+    require(usageNum, exit);
+    usage = usageNum->unsigned32BitValue();
+    
+    if (eventType == kIOHIDEventTypeKeyboard) {
+        require(_keyboard.elements, exit);
+        
+        for (unsigned int index = 0; index < _keyboard.elements->getCount(); index++) {
+            IOHIDElement *element = OSDynamicCast(IOHIDElement, _keyboard.elements->getObject(index));
+            require(element, exit);
+            
+            if (usagePage != element->getUsagePage() || usage != element->getUsage())
+                continue;
+            
+            event = IOHIDEvent::keyboardEvent(element->getTimeStamp(), usagePage, usage, element->getValue());
             break;
         }
     }
+    
 exit:
     return event;
 }
@@ -1911,6 +2109,30 @@ bool IOHIDEventDriver::parseKeyboardElement(IOHIDElement * element)
                 }
             }
             break;
+
+        default:
+            // Enumerate blessed AppleVendor usages.
+            if (!_keyboard.blessedUsagePairs) {
+                break;
+            }
+            for (unsigned int i = 0; i < _keyboard.blessedUsagePairs->getCount(); i++)
+            {
+                OSDictionary *  blessedUsageDict = (OSDynamicCast(OSDictionary, _keyboard.blessedUsagePairs->getObject(i)));
+                OSNumber *      blessedUsagePage;
+                OSNumber *      blessedUsage;
+
+                require_action(blessedUsageDict, exit, HIDLogError("Error parsing a blessed usage pair dict!"));
+
+                blessedUsagePage = OSDynamicCast(OSNumber, blessedUsageDict->getObject(kIOHIDEventDriverBlessedUsagePageKey));
+                blessedUsage     = OSDynamicCast(OSNumber, blessedUsageDict->getObject(kIOHIDEventDriverBlessedUsageKey));
+                require_action(blessedUsagePage && blessedUsage, exit, HIDLogError("Error parsing blessed usage pairs!"));
+
+                if (usagePage == blessedUsagePage->unsigned32BitValue() && usage == blessedUsage->unsigned32BitValue()) {
+                    store = true;
+                    break;
+                }
+            }
+            break;
     }
     
     require(store, exit);
@@ -1929,7 +2151,7 @@ exit:
 //====================================================================================================
 // IOHIDEventDriver::parseUnicodeElement
 //====================================================================================================
-#if TARGET_OS_EMBEDDED
+#if TARGET_OS_IPHONE
 bool IOHIDEventDriver::parseUnicodeElement(IOHIDElement * element)
 {
     bool store = false;
@@ -2290,7 +2512,7 @@ bool IOHIDEventDriver::parseTemperatureElement(IOHIDElement * element)
     switch (usagePage) {
         case kHIDPage_Sensor:
             switch (usage) {
-                case kHIDUsage_Snsr_Environmental_Temperature:
+                case kHIDUsage_Snsr_Data_Environmental_Temperature:
                     store = true;
                     break;
             }
@@ -2329,10 +2551,14 @@ bool IOHIDEventDriver::parseSensorPropertyElement(IOHIDElement * element)
                 case kHIDUsage_Snsr_Property_ReportInterval:
                     propertyElement = &_sensorProperty.reportInterval;
                    break;
+                case kHIDUsage_Snsr_Property_MaxFIFOEvents:
+                    propertyElement = &_sensorProperty.maxFIFOEvents;
+                    break;
                 case kHIDUsage_Snsr_Property_ReportLatency:
                     propertyElement = &_sensorProperty.reportLatency;
                     break;
             }
+            break;
         case kHIDPage_AppleVendorSensor:
             switch (usage) {
                 case kHIDUsage_AppleVendorSensor_BTSniffOff:
@@ -2363,7 +2589,7 @@ bool IOHIDEventDriver::parseDeviceOrientationElement(IOHIDElement * element)
 {
     UInt32 usagePage    = element->getUsagePage();
     UInt32 usage        = element->getUsage();
-    bool   store        = false;
+    OSArray ** store    = NULL;
     
     switch (usagePage) {
         case kHIDPage_AppleVendorMotion:
@@ -2375,7 +2601,15 @@ bool IOHIDEventDriver::parseDeviceOrientationElement(IOHIDElement * element)
                 case kHIDUsage_AppleVendorMotion_DeviceOrientationTypeLandscapeRight:
                 case kHIDUsage_AppleVendorMotion_DeviceOrientationTypeFaceUp:
                 case kHIDUsage_AppleVendorMotion_DeviceOrientationTypeFaceDown:
-                    store = true;
+                    store = &(_orientation.cmElements);
+            }
+            break;
+        case kHIDPage_Sensor:
+            switch (usage) {
+                case kHIDUsage_Snsr_Data_Orientation_TiltXAxis:
+                case kHIDUsage_Snsr_Data_Orientation_TiltYAxis:
+                case kHIDUsage_Snsr_Data_Orientation_TiltZAxis:
+                    store = &(_orientation.tiltElements);
             }
             break;
         default:
@@ -2384,15 +2618,16 @@ bool IOHIDEventDriver::parseDeviceOrientationElement(IOHIDElement * element)
     
     require(store, exit);
     
-    if (!_orientation.elements) {
-        _orientation.elements = OSArray::withCapacity(7);
-        require(_orientation.elements, exit);
+    if (*store == NULL) {
+        *store = OSArray::withCapacity(7);
+        require(*store, exit);
     }
     
-    _orientation.elements->setObject(element);
+    (*store)->setObject(element);
     
 exit:
-    return store;
+    
+    return (store != NULL);
 }
 
 //====================================================================================================
@@ -2476,7 +2711,7 @@ UInt32 IOHIDEventDriver::checkGameControllerElement(IOHIDElement * element)
             break;
             
         case kHIDPage_Button:
-            require(usage >= 1 && usage <= 8, exit);
+            require(usage >= 1 && usage <= 10, exit);
             
             base = kHIDUsage_Button_1;
             offset = 0;
@@ -2485,7 +2720,7 @@ UInt32 IOHIDEventDriver::checkGameControllerElement(IOHIDElement * element)
             
         case kHIDPage_Game:
             if (usage == kHIDUsage_Game_GamepadFormFitting || usage == kHIDUsage_Game_GamepadFormFitting_Compatibility) {
-                base = kHIDUsage_Game_GamepadFormFitting_Compatibility;
+                base = usage;
                 offset = 24;
             }
             
@@ -2669,6 +2904,8 @@ void IOHIDEventDriver::handleGameControllerReport(AbsoluteTime timeStamp, UInt32
         IOHIDElement *  element;
         IOFixed         elementFixedVal;
         IOFixed *       gcFixedVal = NULL;
+        unsigned int    elementIntVal;
+        unsigned int *  gcIntVal = NULL;
         AbsoluteTime    elementTimeStamp;
         UInt32          usagePage, usage;
         bool            elementIsCurrent;
@@ -2741,14 +2978,23 @@ void IOHIDEventDriver::handleGameControllerReport(AbsoluteTime timeStamp, UInt32
                     case 8:
                         gcFixedVal = &_gameController.shoulder.r2;
                         break;
-                        
+                    case 9:
+                        gcIntVal = &_gameController.thumbstick.left;
+                        break;
+                    case 10:
+                        gcIntVal = &_gameController.thumbstick.right;
+                        break;
+
                 }
                 break;
         }
 
-        if ( gcFixedVal && ( *gcFixedVal != ( elementFixedVal = element->getScaledFixedValue(kIOHIDValueScaleTypeCalibrated) ) ) )
-        {
+        if (gcFixedVal && ( *gcFixedVal != ( elementFixedVal = element->getScaledFixedValue(kIOHIDValueScaleTypeCalibrated)))){
             *gcFixedVal = elementFixedVal;
+            handled = true;
+        }
+        if (gcIntVal && ( *gcIntVal != (elementIntVal = element->getScaledValue()))){
+            *gcIntVal = elementIntVal;
             handled = true;
         }
     }
@@ -2759,7 +3005,7 @@ void IOHIDEventDriver::handleGameControllerReport(AbsoluteTime timeStamp, UInt32
     require_quiet(reportID == _gameController.sendingReportID, exit);
     
     if ( _gameController.extended ) {
-        dispatchExtendedGameControllerEvent(timeStamp, _gameController.dpad.up, _gameController.dpad.down, _gameController.dpad.left, _gameController.dpad.right, _gameController.face.x, _gameController.face.y, _gameController.face.a, _gameController.face.b, _gameController.shoulder.l1, _gameController.shoulder.r1, _gameController.shoulder.l2, _gameController.shoulder.r2, _gameController.joystick.x, _gameController.joystick.y, _gameController.joystick.z, _gameController.joystick.rz);
+        dispatchExtendedGameControllerEventWithThumbstickButtons(timeStamp, _gameController.dpad.up, _gameController.dpad.down, _gameController.dpad.left, _gameController.dpad.right, _gameController.face.x, _gameController.face.y, _gameController.face.a, _gameController.face.b, _gameController.shoulder.l1, _gameController.shoulder.r1, _gameController.shoulder.l2, _gameController.shoulder.r2, _gameController.joystick.x, _gameController.joystick.y, _gameController.joystick.z, _gameController.joystick.rz, _gameController.thumbstick.left, _gameController.thumbstick.right);
     } else {
         dispatchStandardGameControllerEvent(timeStamp, _gameController.dpad.up, _gameController.dpad.down, _gameController.dpad.left, _gameController.dpad.right, _gameController.face.x, _gameController.face.y, _gameController.face.a, _gameController.face.b, _gameController.shoulder.l1, _gameController.shoulder.r1);
     }
@@ -3300,7 +3546,6 @@ IOHIDEvent* IOHIDEventDriver::createDigitizerTransducerEventForReport(DigitizerT
     event = IOHIDEvent::digitizerEvent(timeStamp, transducerID, transducer->type, inRange, buttonState, X, Y, Z, tipPressure, barrelPressure, twist, eventOptions);
     require(event, exit);
 
-
     if ( tipPressure ) {
         touch |= 1;
     } else {
@@ -3312,20 +3557,23 @@ IOHIDEvent* IOHIDEventDriver::createDigitizerTransducerEventForReport(DigitizerT
     if (touch != transducer->touch) {
         eventMask |= kIOHIDDigitizerEventTouch;
     }
+    transducer->touch = touch;
   
     if (buttonState & cancelState & 1) {
         eventMask |= kIOHIDDigitizerEventCancel;
     }
     
-    if (inRange && ( (transducer->X != X) || (transducer->Y != Y) || (transducer->Z != Z))) {
+    if (inRange && ((transducer->X != X) || (transducer->Y != Y) || (transducer->Z != Z))) {
         eventMask |= kIOHIDDigitizerEventPosition;
     }
 
-    if ( inRange ) {
-        eventMask |= kIOHIDDigitizerEventRange;
+    if (inRange) {
         transducer->X = X;
         transducer->Y = Y;
-        eventMask |= kIOHIDDigitizerEventIdentity;
+    }
+
+    if (inRange != transducer->inRange)  {
+        eventMask |= kIOHIDDigitizerEventRange;
     }
     transducer->inRange = inRange;
 
@@ -3500,7 +3748,7 @@ exit:
 //====================================================================================================
 // IOHIDEventDriver::handleUnicodeReport
 //====================================================================================================
-#if TARGET_OS_EMBEDDED
+#if TARGET_OS_IPHONE
 void IOHIDEventDriver::handleUnicodeReport(AbsoluteTime timeStamp, UInt32 reportID)
 {
     handleUnicodeLegacyReport(timeStamp, reportID);
@@ -3871,7 +4119,6 @@ void IOHIDEventDriver::handleAccelReport(AbsoluteTime timeStamp, UInt32 reportID
         UInt32          usagePage;
         UInt32          usage;
         UInt32          value;
-        bool            elementValid;
         
 
         element = OSDynamicCast(IOHIDElement, _accel.elements->getObject(index));
@@ -3879,9 +4126,10 @@ void IOHIDEventDriver::handleAccelReport(AbsoluteTime timeStamp, UInt32 reportID
         if (element->getReportID() != reportID) {
             continue;
         }
+
+        valid = true;
   
         elementTimeStamp = element->getTimeStamp();
-        elementValid     = (CMP_ABSOLUTETIME(&timeStamp, &elementTimeStamp) != 0);
         usagePage   = element->getUsagePage();
         usage       = element->getUsage();
         value       = element->getValue();
@@ -3891,15 +4139,12 @@ void IOHIDEventDriver::handleAccelReport(AbsoluteTime timeStamp, UInt32 reportID
                 switch (usage) {
                     case kHIDUsage_Snsr_Data_Motion_AccelerationAxisX:
                         x = element->getScaledFixedValue (kIOHIDValueScaleTypeExponent);
-                        valid|=elementValid;
                     break;
                     case kHIDUsage_Snsr_Data_Motion_AccelerationAxisY:
                         y = element->getScaledFixedValue (kIOHIDValueScaleTypeExponent);
-                        valid|=elementValid;
                         break;
                     case kHIDUsage_Snsr_Data_Motion_AccelerationAxisZ:
                         z = element->getScaledFixedValue (kIOHIDValueScaleTypeExponent);
-                        valid|=elementValid;
                         break;
                     default:
                         break;
@@ -3909,15 +4154,12 @@ void IOHIDEventDriver::handleAccelReport(AbsoluteTime timeStamp, UInt32 reportID
                 switch (usage) {
                     case kHIDUsage_AppleVendorMotion_Type:
                         type = element->getValue();
-                        valid|=elementValid;
                         break;
                     case kHIDUsage_AppleVendorMotion_Path:
                         subType = element->getValue();
-                        valid|=elementValid;
                         break;
                     case kHIDUsage_AppleVendorMotion_Generation:
                         generation = element->getValue();
-                        valid|=elementValid;
                         break;
                 }
                 break;
@@ -3963,16 +4205,16 @@ void IOHIDEventDriver::handleGyroReport(AbsoluteTime timeStamp, UInt32 reportID)
         UInt32          usagePage;
         UInt32          usage;
         UInt32          value;
-        bool            elementValid;
 
         element = OSDynamicCast(IOHIDElement, _gyro.elements->getObject(index));
         
         if (element->getReportID() != reportID) {
             continue;
         }
+
+        valid = true;
         
         elementTimeStamp = element->getTimeStamp();
-        elementValid     = (CMP_ABSOLUTETIME(&timeStamp, &elementTimeStamp) != 0);
         usagePage   = element->getUsagePage();
         usage       = element->getUsage();
         value       = element->getValue();
@@ -3983,15 +4225,12 @@ void IOHIDEventDriver::handleGyroReport(AbsoluteTime timeStamp, UInt32 reportID)
                 switch (usage) {
                     case kHIDUsage_Snsr_Data_Motion_AngularVelocityXAxis:
                         x = element->getScaledFixedValue (kIOHIDValueScaleTypeExponent);
-                        valid |= elementValid;
                         break;
                     case kHIDUsage_Snsr_Data_Motion_AngularVelocityYAxis:
                         y = element->getScaledFixedValue (kIOHIDValueScaleTypeExponent);
-                        valid |= elementValid;
                         break;
                     case kHIDUsage_Snsr_Data_Motion_AngularVelocityZAxis:
                         z = element->getScaledFixedValue (kIOHIDValueScaleTypeExponent);
-                        valid |= elementValid;
                         break;
                     default:
                         break;
@@ -4001,15 +4240,12 @@ void IOHIDEventDriver::handleGyroReport(AbsoluteTime timeStamp, UInt32 reportID)
                 switch (usage) {
                     case kHIDUsage_AppleVendorMotion_Type:
                         type = element->getValue();
-                        valid |= elementValid;
                         break;
                     case kHIDUsage_AppleVendorMotion_Path:
                         subType = element->getValue();
-                        valid |= elementValid;
                         break;
                     case kHIDUsage_AppleVendorMotion_Generation:
                         generation = element->getValue();
-                        valid |= elementValid;
                         break;
                 }
                 break;
@@ -4053,16 +4289,16 @@ void IOHIDEventDriver::handleCompassReport(AbsoluteTime timeStamp, UInt32 report
         UInt32          usagePage;
         UInt32          usage;
         UInt32          value;
-        bool            elementValid;
         
         element = OSDynamicCast(IOHIDElement, _compass.elements->getObject(index));
         
         if (element->getReportID() != reportID) {
             continue;
         }
+
+        valid = true;
         
         elementTimeStamp = element->getTimeStamp();
-        elementValid     = (CMP_ABSOLUTETIME(&timeStamp, &elementTimeStamp) != 0);
         usagePage   = element->getUsagePage();
         usage       = element->getUsage();
         value       = element->getValue();
@@ -4072,15 +4308,12 @@ void IOHIDEventDriver::handleCompassReport(AbsoluteTime timeStamp, UInt32 report
                 switch (usage) {
                     case kHIDUsage_Snsr_Data_Orientation_MagneticFluxXAxis:
                         x = element->getScaledFixedValue (kIOHIDValueScaleTypeExponent);
-                        valid |= elementValid;
                         break;
                     case kHIDUsage_Snsr_Data_Orientation_MagneticFluxYAxis:
                         y = element->getScaledFixedValue (kIOHIDValueScaleTypeExponent);
-                        valid |= elementValid;
                         break;
                     case kHIDUsage_Snsr_Data_Orientation_MagneticFluxZAxis:
                         z = element->getScaledFixedValue (kIOHIDValueScaleTypeExponent);
-                        valid |= elementValid;
                         break;
                     default:
                         break;
@@ -4090,15 +4323,12 @@ void IOHIDEventDriver::handleCompassReport(AbsoluteTime timeStamp, UInt32 report
                 switch (usage) {
                     case kHIDUsage_AppleVendorMotion_Type:
                         type = element->getValue();
-                        valid |= elementValid;
                         break;
                     case kHIDUsage_AppleVendorMotion_Path:
                         subType = element->getValue();
-                        valid |= elementValid;
                         break;
                     case kHIDUsage_AppleVendorMotion_Generation:
                         generation = element->getValue();
-                        valid |= elementValid;
                         break;
                 }
                 break;
@@ -4141,13 +4371,13 @@ void IOHIDEventDriver::handleTemperatureReport(AbsoluteTime timeStamp, UInt32 re
         bool            elementValid;
         
         element = OSDynamicCast(IOHIDElement, _temperature.elements->getObject(index));
-        
+
         if (element->getReportID() != reportID) {
             continue;
         }
         
         elementTimeStamp = element->getTimeStamp();
-        elementValid     = (CMP_ABSOLUTETIME(&timeStamp, &elementTimeStamp) != 0);
+        elementValid     = (CMP_ABSOLUTETIME(&timeStamp, &elementTimeStamp) == 0);
         usagePage   = element->getUsagePage();
         usage       = element->getUsage();
         value       = element->getValue();
@@ -4155,7 +4385,7 @@ void IOHIDEventDriver::handleTemperatureReport(AbsoluteTime timeStamp, UInt32 re
         switch (usagePage) {
             case kHIDPage_Sensor:
                 switch (usage) {
-                    case kHIDUsage_Snsr_Environmental_Temperature:
+                    case kHIDUsage_Snsr_Data_Environmental_Temperature:
                         temperature = element->getScaledFixedValue (kIOHIDValueScaleTypeExponent);
                         valid |= elementValid;
                         break;
@@ -4187,15 +4417,19 @@ void IOHIDEventDriver::handleDeviceOrientationReport(AbsoluteTime timeStamp, UIn
 {
     UInt32      index;
     UInt32      count;
+    IOHIDEvent * event = NULL;
+    IOFixed     tiltX = 0;
+    IOFixed     tiltY = 0;
+    IOFixed     tiltZ = 0;
     
-    require_quiet(_orientation.elements, exit);
+    require_quiet(_orientation.cmElements, tilt);
     
-    for (index = 0, count = _orientation.elements->getCount(); index < count; index++) {
+    for (index = 0, count = _orientation.cmElements->getCount(); index < count; index++) {
         IOHIDElement *  element;
         AbsoluteTime    elementTimeStamp;
         UInt32          usagePage, usage, value, preValue;
         
-        element = OSDynamicCast(IOHIDElement, _orientation.elements->getObject(index));
+        element = OSDynamicCast(IOHIDElement, _orientation.cmElements->getObject(index));
         
         if (element->getReportID() != reportID) {
             continue;
@@ -4205,7 +4439,7 @@ void IOHIDEventDriver::handleDeviceOrientationReport(AbsoluteTime timeStamp, UIn
         if (CMP_ABSOLUTETIME(&timeStamp, &elementTimeStamp) != 0) {
             continue;
         }
-        
+  
         preValue    = element->getValue(kIOHIDValueOptionsFlagPrevious) != 0;
         value       = element->getValue() != 0;
         
@@ -4214,14 +4448,64 @@ void IOHIDEventDriver::handleDeviceOrientationReport(AbsoluteTime timeStamp, UIn
             usagePage   = element->getUsagePage();
             usage       = element->getUsage();
             
-            IOHIDEvent * event = IOHIDEvent::orientationEvent (timeStamp, kIOHIDOrientationTypeCMUsage);
+            event = IOHIDEvent::orientationEvent (timeStamp, kIOHIDOrientationTypeCMUsage);
             if (event) {
                 event->setIntegerValue (kIOHIDEventFieldOrientationDeviceOrientationUsage, usage);
                 dispatchEvent(event);
                 event->release();
+                event = NULL;
             }
             break;
         }
+    }
+    
+tilt:
+
+    require_quiet(_orientation.tiltElements, exit);
+    
+    for (index = 0, count = _orientation.tiltElements->getCount(); index < count; index++) {
+        IOHIDElement *  element;
+        AbsoluteTime    elementTimeStamp;
+        UInt32          usage;
+        
+        element = OSDynamicCast(IOHIDElement, _orientation.tiltElements->getObject(index));
+        
+        if (element->getReportID() != reportID) {
+            continue;
+        }
+   
+        usage = element->getUsage();
+        switch (usage) {
+            case kHIDUsage_Snsr_Data_Orientation_TiltXAxis:
+                tiltX = element->getScaledFixedValue(kIOHIDValueScaleTypeExponent);
+                break;
+            case kHIDUsage_Snsr_Data_Orientation_TiltYAxis:
+                tiltY = element->getScaledFixedValue(kIOHIDValueScaleTypeExponent);
+                break;
+            case kHIDUsage_Snsr_Data_Orientation_TiltZAxis:
+                tiltZ = element->getScaledFixedValue(kIOHIDValueScaleTypeExponent);
+                break;
+            default:
+                break;
+        }
+        
+        
+        elementTimeStamp = element->getTimeStamp();
+        if (CMP_ABSOLUTETIME(&timeStamp, &elementTimeStamp) != 0) {
+            continue;
+        }
+        
+        if (!event) {
+            event = IOHIDEvent::orientationEvent (timeStamp, kIOHIDOrientationTypeTilt);
+        }
+    }
+
+    if (event) {
+        event->setFixedValue(kIOHIDEventFieldOrientationTiltX, tiltX);
+        event->setFixedValue(kIOHIDEventFieldOrientationTiltY, tiltY);
+        event->setFixedValue(kIOHIDEventFieldOrientationTiltZ, tiltZ);
+        dispatchEvent(event);
+        event->release();
     }
     
 exit:
@@ -4341,7 +4625,7 @@ bool   IOHIDEventDriver::serializeDebugState(void * ref __unused, OSSerialize * 
             OSSafeReleaseNULL(num);
         }
     }
-  
+
     result = debugDict->serialize(serializer);
     debugDict->release();
 

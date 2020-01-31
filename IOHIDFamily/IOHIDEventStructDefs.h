@@ -294,6 +294,8 @@ typedef struct {
 
 typedef struct {
     IOHIDGameControllerEventData base;
+    uint32_t thumbstickButtonLeft:1;
+    uint32_t thumbstickButtonRight:1;
 } __IOHIDGameControllerEventData;
 
 typedef struct {
@@ -654,8 +656,19 @@ typedef struct {
             IOFixed z;
         } polar;
         struct {
+            IOFixed x;
+            IOFixed y;
+            IOFixed z;
+        } tilt;
+        struct {
             uint32_t usage;
         } deviceOrientation;
+        struct {
+            IOFixed w;
+            IOFixed x;
+            IOFixed y;
+            IOFixed z;
+        } quaternion;
     } orientation;
 } IOHIDOrientationEventData;
 

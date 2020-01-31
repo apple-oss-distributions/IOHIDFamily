@@ -28,6 +28,7 @@
 #include <pthread.h>
 #include <AssertMacros.h>
 #include "IOHIDReportDescriptorParser.h"
+#include <os/variant_private.h>
 
 
 typedef struct __attribute__((packed)) {
@@ -607,15 +608,12 @@ static void * getReportCharThread(void *arg)
                             
                             for ( int index=0; index<CFArrayGetCount(array) && reportIndex<sizeof(__report); index++) {
                                 CFStringRef substring = (CFStringRef)CFArrayGetValueAtIndex(array, index);
-                                const char * substr;
+                                char substr[3] = { 0 };
                                 
                                 if ( !substring )
                                     continue;
                                 
-                                substr = CFStringGetCStringPtr(substring, kCFStringEncodingMacRoman);
-                                if ( !substr )
-                                    continue;
-                                
+                                CFStringGetCString(substring, substr, sizeof(substr), kCFStringEncodingMacRoman);
                                 __report[reportIndex++] = strtoul(substr, NULL, 16);
                             }
                             
@@ -736,6 +734,10 @@ int main (int argc, const char * argv[])
     IOHIDUserDeviceReportCallback   outputReportCallback    = NULL;
     IOHIDUserDeviceReportCallback   inputReportCallback     = getReportCallback;
     CFMutableDictionaryRef          properties              = NULL;
+    
+    if(!os_variant_allows_internal_security_policies(NULL)) {
+        return 0;
+    }
     
     properties = CFDictionaryCreateMutable(kCFAllocatorDefault, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     

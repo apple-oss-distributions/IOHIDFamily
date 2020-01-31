@@ -10,8 +10,8 @@
 #define devices_h
 
 #import <Foundation/Foundation.h>
-#import <CoreUtils/CoreUtils.h>
-
+#import <CoreUtils/CommonServices.h>
+#import <os/log.h>
 #include <IOKit/hid/IOHIDEventSystemClient.h>
 #include <IOKit/hid/IOHIDLib.h>
 
@@ -45,5 +45,8 @@ NSDictionary *createServiceInfoDictionary(IOHIDServiceClientRef service);
 NSDictionary *createDeviceInfoDictionary(IOHIDDeviceRef device);
 bool setClientMatching(IOHIDEventSystemClientRef client, const char *str);
 bool setManagerMatching(IOHIDManagerRef manager, const char *str);
+NSString * formatPropertyValue(id value, NSUInteger integerBase);
+
+
 
 #endif /* devices_h */

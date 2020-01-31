@@ -31,8 +31,12 @@
 
 //===========================================================================
 // An object that describes a single HID element.
-    
-class IOHIDElement: public OSCollection
+
+#if defined(KERNEL) && !defined(KERNEL_PRIVATE)
+class __deprecated_msg("Use DriverKit") IOHIDElement : public OSCollection
+#else
+class IOHIDElement : public OSCollection
+#endif
 {
     OSDeclareAbstractStructors( IOHIDElement )
     
@@ -88,7 +92,9 @@ public:
     OSMetaClassDeclareReservedUsed(IOHIDElement,  6);
     virtual boolean_t                       isVariableSize()        = 0;
 
-    OSMetaClassDeclareReservedUnused(IOHIDElement,  7);
+    OSMetaClassDeclareReservedUsed(IOHIDElement,  7);
+    virtual IOFixed                         getScaledFixedValue(IOHIDValueScaleType type, IOOptionBits options)  = 0;
+
     OSMetaClassDeclareReservedUnused(IOHIDElement,  8);
     OSMetaClassDeclareReservedUnused(IOHIDElement,  9);
     OSMetaClassDeclareReservedUnused(IOHIDElement, 10);

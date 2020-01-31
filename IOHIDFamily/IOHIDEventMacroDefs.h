@@ -1916,6 +1916,12 @@ case kIOHIDEventTypeGameController:\
         case kIOHIDEventFieldGameControllerShoulderButtonR2: \
             ((IOHIDGameControllerEventData*)event)->shoulder.r2 = (typeof(((IOHIDGameControllerEventData*)event)->shoulder.r2)) CAST_INTEGER_TO_FIXED(value); \
             break; \
+        case kIOHIDEventFieldGameControllerThumbstickButtonLeft: \
+            ((__IOHIDGameControllerEventData*)event)->thumbstickButtonLeft = value ? 1 : 0; \
+            break; \
+        case kIOHIDEventFieldGameControllerThumbstickButtonRight: \
+            ((__IOHIDGameControllerEventData*)event)->thumbstickButtonRight = value ? 1 : 0; \
+            break; \
         _IOHIDGameControllerSetSynthesizedFieldsAsIntegerMacro(event,field) \
     }\
     break;\
@@ -1976,6 +1982,12 @@ case kIOHIDEventTypeGameController:\
             break; \
         case kIOHIDEventFieldGameControllerShoulderButtonR2: \
             value = (typeof(value))CAST_FIXED_TO_INTEGER(((IOHIDGameControllerEventData*)event)->shoulder.r2); \
+            break; \
+        case kIOHIDEventFieldGameControllerThumbstickButtonLeft: \
+            value = (typeof(value))CAST_INTEGER_TO_INTEGER(((__IOHIDGameControllerEventData*)event)->thumbstickButtonLeft); \
+            break; \
+        case kIOHIDEventFieldGameControllerThumbstickButtonRight: \
+            value = (typeof(value))CAST_INTEGER_TO_INTEGER(((__IOHIDGameControllerEventData*)event)->thumbstickButtonRight); \
             break; \
         _IOHIDGameControllerGetSynthesizedFieldsAsIntegerMacro(event,field) \
     }\
@@ -2038,6 +2050,12 @@ case kIOHIDEventTypeGameController:\
         case kIOHIDEventFieldGameControllerShoulderButtonR2: \
             ((IOHIDGameControllerEventData*)event)->shoulder.r2 = (typeof(((IOHIDGameControllerEventData*)event)->shoulder.r2)) CAST_DOUBLE_TO_FIXED(value); \
             break; \
+        case kIOHIDEventFieldGameControllerThumbstickButtonLeft: \
+            ((__IOHIDGameControllerEventData*)event)->thumbstickButtonLeft = value ? 1 : 0; \
+            break; \
+        case kIOHIDEventFieldGameControllerThumbstickButtonRight: \
+            ((__IOHIDGameControllerEventData*)event)->thumbstickButtonRight = value ? 1 : 0; \
+            break; \
         _IOHIDGameControllerSetSynthesizedFieldsAsDoubleMacro(event,field) \
     }\
     break;\
@@ -2098,6 +2116,12 @@ case kIOHIDEventTypeGameController:\
             break; \
         case kIOHIDEventFieldGameControllerShoulderButtonR2: \
             value = (typeof(value))CAST_FIXED_TO_DOUBLE(((IOHIDGameControllerEventData*)event)->shoulder.r2); \
+            break; \
+        case kIOHIDEventFieldGameControllerThumbstickButtonLeft: \
+            value = (typeof(value))CAST_INTEGER_TO_DOUBLE(((__IOHIDGameControllerEventData*)event)->thumbstickButtonLeft); \
+            break; \
+        case kIOHIDEventFieldGameControllerThumbstickButtonRight: \
+            value = (typeof(value))CAST_INTEGER_TO_DOUBLE(((__IOHIDGameControllerEventData*)event)->thumbstickButtonRight); \
             break; \
         _IOHIDGameControllerGetSynthesizedFieldsAsDoubleMacro(event,field) \
     }\
@@ -2160,6 +2184,12 @@ case kIOHIDEventTypeGameController:\
         case kIOHIDEventFieldGameControllerShoulderButtonR2: \
             ((IOHIDGameControllerEventData*)event)->shoulder.r2 = (typeof(((IOHIDGameControllerEventData*)event)->shoulder.r2)) CAST_FIXED_TO_FIXED(value); \
             break; \
+        case kIOHIDEventFieldGameControllerThumbstickButtonLeft: \
+            ((__IOHIDGameControllerEventData*)event)->thumbstickButtonLeft = value ? 1 : 0; \
+            break; \
+        case kIOHIDEventFieldGameControllerThumbstickButtonRight: \
+            ((__IOHIDGameControllerEventData*)event)->thumbstickButtonRight = value ? 1 : 0; \
+            break; \
         _IOHIDGameControllerSetSynthesizedFieldsAsFixedMacro(event,field) \
     }\
     break;\
@@ -2220,6 +2250,12 @@ case kIOHIDEventTypeGameController:\
             break; \
         case kIOHIDEventFieldGameControllerShoulderButtonR2: \
             value = (typeof(value))CAST_FIXED_TO_FIXED(((IOHIDGameControllerEventData*)event)->shoulder.r2); \
+            break; \
+        case kIOHIDEventFieldGameControllerThumbstickButtonLeft: \
+            value = (typeof(value))CAST_SHORTINTEGER_TO_FIXED(((__IOHIDGameControllerEventData*)event)->thumbstickButtonLeft); \
+            break; \
+        case kIOHIDEventFieldGameControllerThumbstickButtonRight: \
+            value = (typeof(value))CAST_SHORTINTEGER_TO_FIXED(((__IOHIDGameControllerEventData*)event)->thumbstickButtonRight); \
             break; \
         _IOHIDGameControllerGetSynthesizedFieldsAsFixedMacro(event,field) \
     }\
@@ -5306,10 +5342,32 @@ case kIOHIDEventTypeOrientation:\
 {\
     switch (field)\
     {\
+        case kIOHIDEventFieldOrientationTiltZ: \
+        case kIOHIDEventFieldOrientationTiltY: \
+        case kIOHIDEventFieldOrientationTiltX: \
+        case kIOHIDEventFieldOrientationAzimuth: \
+        case kIOHIDEventFieldOrientationQuatZ: \
+        case kIOHIDEventFieldOrientationQuatY: \
+        case kIOHIDEventFieldOrientationQuatX: \
+        case kIOHIDEventFieldOrientationQuatW: \
         case kIOHIDEventFieldOrientationDeviceOrientationUsage: \
         case kIOHIDEventFieldOrientationAltitude: \
-        case kIOHIDEventFieldOrientationAzimuth: \
         case kIOHIDEventFieldOrientationRadius: \
+            if (((__IOHIDOrientationEventData*)event)->orientationType == kIOHIDOrientationTypeTilt) {\
+                switch (field) \
+                {\
+                    case kIOHIDEventFieldOrientationTiltX: \
+                        ((IOHIDOrientationEventData*)event)->orientation.tilt.x = (typeof(((IOHIDOrientationEventData*)event)->orientation.tilt.x)) CAST_INTEGER_TO_FIXED(value); \
+                        break; \
+                    case kIOHIDEventFieldOrientationTiltY: \
+                        ((IOHIDOrientationEventData*)event)->orientation.tilt.y = (typeof(((IOHIDOrientationEventData*)event)->orientation.tilt.y)) CAST_INTEGER_TO_FIXED(value); \
+                        break; \
+                    case kIOHIDEventFieldOrientationTiltZ: \
+                        ((IOHIDOrientationEventData*)event)->orientation.tilt.z = (typeof(((IOHIDOrientationEventData*)event)->orientation.tilt.z)) CAST_INTEGER_TO_FIXED(value); \
+                        break; \
+                }\
+                break;\
+            }\
             if (((__IOHIDOrientationEventData*)event)->orientationType == kIOHIDOrientationTypeCMUsage) {\
                 switch (field) \
                 {\
@@ -5334,6 +5392,24 @@ case kIOHIDEventTypeOrientation:\
                 }\
                 break;\
             }\
+            if (((__IOHIDOrientationEventData*)event)->orientationType == kIOHIDOrientationTypeQuaternion) {\
+                switch (field) \
+                {\
+                    case kIOHIDEventFieldOrientationQuatW: \
+                        ((IOHIDOrientationEventData*)event)->orientation.quaternion.w = (typeof(((IOHIDOrientationEventData*)event)->orientation.quaternion.w)) CAST_INTEGER_TO_FIXED(value); \
+                        break; \
+                    case kIOHIDEventFieldOrientationQuatX: \
+                        ((IOHIDOrientationEventData*)event)->orientation.quaternion.x = (typeof(((IOHIDOrientationEventData*)event)->orientation.quaternion.x)) CAST_INTEGER_TO_FIXED(value); \
+                        break; \
+                    case kIOHIDEventFieldOrientationQuatY: \
+                        ((IOHIDOrientationEventData*)event)->orientation.quaternion.y = (typeof(((IOHIDOrientationEventData*)event)->orientation.quaternion.y)) CAST_INTEGER_TO_FIXED(value); \
+                        break; \
+                    case kIOHIDEventFieldOrientationQuatZ: \
+                        ((IOHIDOrientationEventData*)event)->orientation.quaternion.z = (typeof(((IOHIDOrientationEventData*)event)->orientation.quaternion.z)) CAST_INTEGER_TO_FIXED(value); \
+                        break; \
+                }\
+                break;\
+            }\
             break;\
         _IOHIDOrientationSetSynthesizedFieldsAsIntegerMacro(event,field) \
     }\
@@ -5348,10 +5424,32 @@ case kIOHIDEventTypeOrientation:\
         case kIOHIDEventFieldOrientationOrientationType: \
             value = (typeof(value))CAST_INTEGER_TO_INTEGER(((__IOHIDOrientationEventData*)event)->orientationType); \
             break; \
+        case kIOHIDEventFieldOrientationTiltZ: \
+        case kIOHIDEventFieldOrientationTiltY: \
+        case kIOHIDEventFieldOrientationTiltX: \
+        case kIOHIDEventFieldOrientationAzimuth: \
+        case kIOHIDEventFieldOrientationQuatZ: \
+        case kIOHIDEventFieldOrientationQuatY: \
+        case kIOHIDEventFieldOrientationQuatX: \
+        case kIOHIDEventFieldOrientationQuatW: \
         case kIOHIDEventFieldOrientationDeviceOrientationUsage: \
         case kIOHIDEventFieldOrientationAltitude: \
-        case kIOHIDEventFieldOrientationAzimuth: \
         case kIOHIDEventFieldOrientationRadius: \
+            if (((__IOHIDOrientationEventData*)event)->orientationType == kIOHIDOrientationTypeTilt) {\
+                switch (field) \
+                {\
+                    case kIOHIDEventFieldOrientationTiltX: \
+                        value = (typeof(value))CAST_FIXED_TO_INTEGER(((IOHIDOrientationEventData*)event)->orientation.tilt.x); \
+                        break; \
+                    case kIOHIDEventFieldOrientationTiltY: \
+                        value = (typeof(value))CAST_FIXED_TO_INTEGER(((IOHIDOrientationEventData*)event)->orientation.tilt.y); \
+                        break; \
+                    case kIOHIDEventFieldOrientationTiltZ: \
+                        value = (typeof(value))CAST_FIXED_TO_INTEGER(((IOHIDOrientationEventData*)event)->orientation.tilt.z); \
+                        break; \
+                }\
+                break;\
+            }\
             if (((__IOHIDOrientationEventData*)event)->orientationType == kIOHIDOrientationTypeCMUsage) {\
                 switch (field) \
                 {\
@@ -5376,6 +5474,24 @@ case kIOHIDEventTypeOrientation:\
                 }\
                 break;\
             }\
+            if (((__IOHIDOrientationEventData*)event)->orientationType == kIOHIDOrientationTypeQuaternion) {\
+                switch (field) \
+                {\
+                    case kIOHIDEventFieldOrientationQuatW: \
+                        value = (typeof(value))CAST_FIXED_TO_INTEGER(((IOHIDOrientationEventData*)event)->orientation.quaternion.w); \
+                        break; \
+                    case kIOHIDEventFieldOrientationQuatX: \
+                        value = (typeof(value))CAST_FIXED_TO_INTEGER(((IOHIDOrientationEventData*)event)->orientation.quaternion.x); \
+                        break; \
+                    case kIOHIDEventFieldOrientationQuatY: \
+                        value = (typeof(value))CAST_FIXED_TO_INTEGER(((IOHIDOrientationEventData*)event)->orientation.quaternion.y); \
+                        break; \
+                    case kIOHIDEventFieldOrientationQuatZ: \
+                        value = (typeof(value))CAST_FIXED_TO_INTEGER(((IOHIDOrientationEventData*)event)->orientation.quaternion.z); \
+                        break; \
+                }\
+                break;\
+            }\
             break;\
         _IOHIDOrientationGetSynthesizedFieldsAsIntegerMacro(event,field) \
     }\
@@ -5387,10 +5503,32 @@ case kIOHIDEventTypeOrientation:\
 {\
     switch (field)\
     {\
+        case kIOHIDEventFieldOrientationTiltZ: \
+        case kIOHIDEventFieldOrientationTiltY: \
+        case kIOHIDEventFieldOrientationTiltX: \
+        case kIOHIDEventFieldOrientationAzimuth: \
+        case kIOHIDEventFieldOrientationQuatZ: \
+        case kIOHIDEventFieldOrientationQuatY: \
+        case kIOHIDEventFieldOrientationQuatX: \
+        case kIOHIDEventFieldOrientationQuatW: \
         case kIOHIDEventFieldOrientationDeviceOrientationUsage: \
         case kIOHIDEventFieldOrientationAltitude: \
-        case kIOHIDEventFieldOrientationAzimuth: \
         case kIOHIDEventFieldOrientationRadius: \
+            if (((__IOHIDOrientationEventData*)event)->orientationType == kIOHIDOrientationTypeTilt) {\
+                switch (field) \
+                {\
+                    case kIOHIDEventFieldOrientationTiltX: \
+                        ((IOHIDOrientationEventData*)event)->orientation.tilt.x = (typeof(((IOHIDOrientationEventData*)event)->orientation.tilt.x)) CAST_DOUBLE_TO_FIXED(value); \
+                        break; \
+                    case kIOHIDEventFieldOrientationTiltY: \
+                        ((IOHIDOrientationEventData*)event)->orientation.tilt.y = (typeof(((IOHIDOrientationEventData*)event)->orientation.tilt.y)) CAST_DOUBLE_TO_FIXED(value); \
+                        break; \
+                    case kIOHIDEventFieldOrientationTiltZ: \
+                        ((IOHIDOrientationEventData*)event)->orientation.tilt.z = (typeof(((IOHIDOrientationEventData*)event)->orientation.tilt.z)) CAST_DOUBLE_TO_FIXED(value); \
+                        break; \
+                }\
+                break;\
+            }\
             if (((__IOHIDOrientationEventData*)event)->orientationType == kIOHIDOrientationTypeCMUsage) {\
                 switch (field) \
                 {\
@@ -5415,6 +5553,24 @@ case kIOHIDEventTypeOrientation:\
                 }\
                 break;\
             }\
+            if (((__IOHIDOrientationEventData*)event)->orientationType == kIOHIDOrientationTypeQuaternion) {\
+                switch (field) \
+                {\
+                    case kIOHIDEventFieldOrientationQuatW: \
+                        ((IOHIDOrientationEventData*)event)->orientation.quaternion.w = (typeof(((IOHIDOrientationEventData*)event)->orientation.quaternion.w)) CAST_DOUBLE_TO_FIXED(value); \
+                        break; \
+                    case kIOHIDEventFieldOrientationQuatX: \
+                        ((IOHIDOrientationEventData*)event)->orientation.quaternion.x = (typeof(((IOHIDOrientationEventData*)event)->orientation.quaternion.x)) CAST_DOUBLE_TO_FIXED(value); \
+                        break; \
+                    case kIOHIDEventFieldOrientationQuatY: \
+                        ((IOHIDOrientationEventData*)event)->orientation.quaternion.y = (typeof(((IOHIDOrientationEventData*)event)->orientation.quaternion.y)) CAST_DOUBLE_TO_FIXED(value); \
+                        break; \
+                    case kIOHIDEventFieldOrientationQuatZ: \
+                        ((IOHIDOrientationEventData*)event)->orientation.quaternion.z = (typeof(((IOHIDOrientationEventData*)event)->orientation.quaternion.z)) CAST_DOUBLE_TO_FIXED(value); \
+                        break; \
+                }\
+                break;\
+            }\
             break;\
         _IOHIDOrientationSetSynthesizedFieldsAsDoubleMacro(event,field) \
     }\
@@ -5429,10 +5585,32 @@ case kIOHIDEventTypeOrientation:\
         case kIOHIDEventFieldOrientationOrientationType: \
             value = (typeof(value))CAST_INTEGER_TO_DOUBLE(((__IOHIDOrientationEventData*)event)->orientationType); \
             break; \
+        case kIOHIDEventFieldOrientationTiltZ: \
+        case kIOHIDEventFieldOrientationTiltY: \
+        case kIOHIDEventFieldOrientationTiltX: \
+        case kIOHIDEventFieldOrientationAzimuth: \
+        case kIOHIDEventFieldOrientationQuatZ: \
+        case kIOHIDEventFieldOrientationQuatY: \
+        case kIOHIDEventFieldOrientationQuatX: \
+        case kIOHIDEventFieldOrientationQuatW: \
         case kIOHIDEventFieldOrientationDeviceOrientationUsage: \
         case kIOHIDEventFieldOrientationAltitude: \
-        case kIOHIDEventFieldOrientationAzimuth: \
         case kIOHIDEventFieldOrientationRadius: \
+            if (((__IOHIDOrientationEventData*)event)->orientationType == kIOHIDOrientationTypeTilt) {\
+                switch (field) \
+                {\
+                    case kIOHIDEventFieldOrientationTiltX: \
+                        value = (typeof(value))CAST_FIXED_TO_DOUBLE(((IOHIDOrientationEventData*)event)->orientation.tilt.x); \
+                        break; \
+                    case kIOHIDEventFieldOrientationTiltY: \
+                        value = (typeof(value))CAST_FIXED_TO_DOUBLE(((IOHIDOrientationEventData*)event)->orientation.tilt.y); \
+                        break; \
+                    case kIOHIDEventFieldOrientationTiltZ: \
+                        value = (typeof(value))CAST_FIXED_TO_DOUBLE(((IOHIDOrientationEventData*)event)->orientation.tilt.z); \
+                        break; \
+                }\
+                break;\
+            }\
             if (((__IOHIDOrientationEventData*)event)->orientationType == kIOHIDOrientationTypeCMUsage) {\
                 switch (field) \
                 {\
@@ -5457,6 +5635,24 @@ case kIOHIDEventTypeOrientation:\
                 }\
                 break;\
             }\
+            if (((__IOHIDOrientationEventData*)event)->orientationType == kIOHIDOrientationTypeQuaternion) {\
+                switch (field) \
+                {\
+                    case kIOHIDEventFieldOrientationQuatW: \
+                        value = (typeof(value))CAST_FIXED_TO_DOUBLE(((IOHIDOrientationEventData*)event)->orientation.quaternion.w); \
+                        break; \
+                    case kIOHIDEventFieldOrientationQuatX: \
+                        value = (typeof(value))CAST_FIXED_TO_DOUBLE(((IOHIDOrientationEventData*)event)->orientation.quaternion.x); \
+                        break; \
+                    case kIOHIDEventFieldOrientationQuatY: \
+                        value = (typeof(value))CAST_FIXED_TO_DOUBLE(((IOHIDOrientationEventData*)event)->orientation.quaternion.y); \
+                        break; \
+                    case kIOHIDEventFieldOrientationQuatZ: \
+                        value = (typeof(value))CAST_FIXED_TO_DOUBLE(((IOHIDOrientationEventData*)event)->orientation.quaternion.z); \
+                        break; \
+                }\
+                break;\
+            }\
             break;\
         _IOHIDOrientationGetSynthesizedFieldsAsDoubleMacro(event,field) \
     }\
@@ -5468,10 +5664,32 @@ case kIOHIDEventTypeOrientation:\
 {\
     switch (field)\
     {\
+        case kIOHIDEventFieldOrientationTiltZ: \
+        case kIOHIDEventFieldOrientationTiltY: \
+        case kIOHIDEventFieldOrientationTiltX: \
+        case kIOHIDEventFieldOrientationAzimuth: \
+        case kIOHIDEventFieldOrientationQuatZ: \
+        case kIOHIDEventFieldOrientationQuatY: \
+        case kIOHIDEventFieldOrientationQuatX: \
+        case kIOHIDEventFieldOrientationQuatW: \
         case kIOHIDEventFieldOrientationDeviceOrientationUsage: \
         case kIOHIDEventFieldOrientationAltitude: \
-        case kIOHIDEventFieldOrientationAzimuth: \
         case kIOHIDEventFieldOrientationRadius: \
+            if (((__IOHIDOrientationEventData*)event)->orientationType == kIOHIDOrientationTypeTilt) {\
+                switch (field) \
+                {\
+                    case kIOHIDEventFieldOrientationTiltX: \
+                        ((IOHIDOrientationEventData*)event)->orientation.tilt.x = (typeof(((IOHIDOrientationEventData*)event)->orientation.tilt.x)) CAST_FIXED_TO_FIXED(value); \
+                        break; \
+                    case kIOHIDEventFieldOrientationTiltY: \
+                        ((IOHIDOrientationEventData*)event)->orientation.tilt.y = (typeof(((IOHIDOrientationEventData*)event)->orientation.tilt.y)) CAST_FIXED_TO_FIXED(value); \
+                        break; \
+                    case kIOHIDEventFieldOrientationTiltZ: \
+                        ((IOHIDOrientationEventData*)event)->orientation.tilt.z = (typeof(((IOHIDOrientationEventData*)event)->orientation.tilt.z)) CAST_FIXED_TO_FIXED(value); \
+                        break; \
+                }\
+                break;\
+            }\
             if (((__IOHIDOrientationEventData*)event)->orientationType == kIOHIDOrientationTypeCMUsage) {\
                 switch (field) \
                 {\
@@ -5496,6 +5714,24 @@ case kIOHIDEventTypeOrientation:\
                 }\
                 break;\
             }\
+            if (((__IOHIDOrientationEventData*)event)->orientationType == kIOHIDOrientationTypeQuaternion) {\
+                switch (field) \
+                {\
+                    case kIOHIDEventFieldOrientationQuatW: \
+                        ((IOHIDOrientationEventData*)event)->orientation.quaternion.w = (typeof(((IOHIDOrientationEventData*)event)->orientation.quaternion.w)) CAST_FIXED_TO_FIXED(value); \
+                        break; \
+                    case kIOHIDEventFieldOrientationQuatX: \
+                        ((IOHIDOrientationEventData*)event)->orientation.quaternion.x = (typeof(((IOHIDOrientationEventData*)event)->orientation.quaternion.x)) CAST_FIXED_TO_FIXED(value); \
+                        break; \
+                    case kIOHIDEventFieldOrientationQuatY: \
+                        ((IOHIDOrientationEventData*)event)->orientation.quaternion.y = (typeof(((IOHIDOrientationEventData*)event)->orientation.quaternion.y)) CAST_FIXED_TO_FIXED(value); \
+                        break; \
+                    case kIOHIDEventFieldOrientationQuatZ: \
+                        ((IOHIDOrientationEventData*)event)->orientation.quaternion.z = (typeof(((IOHIDOrientationEventData*)event)->orientation.quaternion.z)) CAST_FIXED_TO_FIXED(value); \
+                        break; \
+                }\
+                break;\
+            }\
             break;\
         _IOHIDOrientationSetSynthesizedFieldsAsFixedMacro(event,field) \
     }\
@@ -5510,10 +5746,32 @@ case kIOHIDEventTypeOrientation:\
         case kIOHIDEventFieldOrientationOrientationType: \
             value = (typeof(value))CAST_INTEGER_TO_FIXED(((__IOHIDOrientationEventData*)event)->orientationType); \
             break; \
+        case kIOHIDEventFieldOrientationTiltZ: \
+        case kIOHIDEventFieldOrientationTiltY: \
+        case kIOHIDEventFieldOrientationTiltX: \
+        case kIOHIDEventFieldOrientationAzimuth: \
+        case kIOHIDEventFieldOrientationQuatZ: \
+        case kIOHIDEventFieldOrientationQuatY: \
+        case kIOHIDEventFieldOrientationQuatX: \
+        case kIOHIDEventFieldOrientationQuatW: \
         case kIOHIDEventFieldOrientationDeviceOrientationUsage: \
         case kIOHIDEventFieldOrientationAltitude: \
-        case kIOHIDEventFieldOrientationAzimuth: \
         case kIOHIDEventFieldOrientationRadius: \
+            if (((__IOHIDOrientationEventData*)event)->orientationType == kIOHIDOrientationTypeTilt) {\
+                switch (field) \
+                {\
+                    case kIOHIDEventFieldOrientationTiltX: \
+                        value = (typeof(value))CAST_FIXED_TO_FIXED(((IOHIDOrientationEventData*)event)->orientation.tilt.x); \
+                        break; \
+                    case kIOHIDEventFieldOrientationTiltY: \
+                        value = (typeof(value))CAST_FIXED_TO_FIXED(((IOHIDOrientationEventData*)event)->orientation.tilt.y); \
+                        break; \
+                    case kIOHIDEventFieldOrientationTiltZ: \
+                        value = (typeof(value))CAST_FIXED_TO_FIXED(((IOHIDOrientationEventData*)event)->orientation.tilt.z); \
+                        break; \
+                }\
+                break;\
+            }\
             if (((__IOHIDOrientationEventData*)event)->orientationType == kIOHIDOrientationTypeCMUsage) {\
                 switch (field) \
                 {\
@@ -5534,6 +5792,24 @@ case kIOHIDEventTypeOrientation:\
                         break; \
                     case kIOHIDEventFieldOrientationAltitude: \
                         value = (typeof(value))CAST_FIXED_TO_FIXED(((IOHIDOrientationEventData*)event)->orientation.polar.z); \
+                        break; \
+                }\
+                break;\
+            }\
+            if (((__IOHIDOrientationEventData*)event)->orientationType == kIOHIDOrientationTypeQuaternion) {\
+                switch (field) \
+                {\
+                    case kIOHIDEventFieldOrientationQuatW: \
+                        value = (typeof(value))CAST_FIXED_TO_FIXED(((IOHIDOrientationEventData*)event)->orientation.quaternion.w); \
+                        break; \
+                    case kIOHIDEventFieldOrientationQuatX: \
+                        value = (typeof(value))CAST_FIXED_TO_FIXED(((IOHIDOrientationEventData*)event)->orientation.quaternion.x); \
+                        break; \
+                    case kIOHIDEventFieldOrientationQuatY: \
+                        value = (typeof(value))CAST_FIXED_TO_FIXED(((IOHIDOrientationEventData*)event)->orientation.quaternion.y); \
+                        break; \
+                    case kIOHIDEventFieldOrientationQuatZ: \
+                        value = (typeof(value))CAST_FIXED_TO_FIXED(((IOHIDOrientationEventData*)event)->orientation.quaternion.z); \
                         break; \
                 }\
                 break;\

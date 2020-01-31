@@ -10,6 +10,7 @@
 #include <getopt.h>
 #include <mach/mach_time.h>
 #include "utility.h"
+#import <os/variant_private.h>
 
 int report(int argc, const char * argv[]);
 static const NSArray *_debugKeys;
@@ -220,6 +221,10 @@ int report(int argc __unused, const char * argv[] __unused) {
     _debugKeys = @[ @kIOClassKey, @kIOHIDPrimaryUsagePageKey, @kIOHIDPrimaryUsageKey, @kIOHIDVendorIDKey, @kIOHIDProductIDKey,
                      @kIOHIDTransportKey, @kIOHIDLocationIDKey, @kIOHIDProductKey, @kIOHIDManufacturerKey, @kIOHIDDeviceUsagePairsKey ];
     
+    if(!os_variant_allows_internal_security_policies(nil)) {
+        return 0;
+    }
+    
     while ((arg = getopt_long(argc, (char **) argv, MAIN_OPTIONS_SHORT, MAIN_OPTIONS, NULL)) != -1) {
         switch (arg) {
                 // --help
@@ -247,7 +252,9 @@ int report(int argc __unused, const char * argv[] __unused) {
                 
                 set = true;
                 reportID = strtol(optarg, NULL, 16);
-                tmpLength = optind;
+                // optind is incremented by 2 when arg is expected
+                // decrement by 1 to make sure first arg/byte (reportID) is counted
+                tmpLength = optind - 1;
                 
                 for(;tmpLength < argc && *argv[tmpLength] != '-'; tmpLength++) {
                     reportLength++;
@@ -259,8 +266,10 @@ int report(int argc __unused, const char * argv[] __unused) {
                 }
                 
                 reportData = malloc(reportLength);
-                
                 tmpLength = 0;
+                // Prepend reportID as it is skipped by optind
+                reportData[tmpLength++] = reportID;
+
                 for(;optind < argc && *argv[optind] != '-'; optind++) {
                     reportData[tmpLength++] = strtol(argv[optind], NULL, 16);
                 }

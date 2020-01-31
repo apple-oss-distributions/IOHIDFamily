@@ -84,7 +84,10 @@ static uint8_t descriptor[] = {
     dispatch_sync (self.clientQueue, ^{
         IOHIDEventSystemClientScheduleWithDispatchQueue(self.eventSystemClient, self.clientQueue);
         // this is barrier that guaranteed that IOHIDEventSystemClientScheduleWithDispatchQueue completed
-        IOHIDEventSystemClientCopyProperty(self.eventSystemClient, CFSTR (kIOHIDEventSystemClientIsUnresponsive));
+        CFTypeRef val = IOHIDEventSystemClientCopyProperty(self.eventSystemClient, CFSTR (kIOHIDEventSystemClientIsUnresponsive));
+        if (val) {
+            CFRelease(val);
+        }
     });
   
 }
@@ -123,12 +126,11 @@ static uint8_t descriptor[] = {
     XCTAssert (registryID != nil);
     
     IOHIDServiceClientRef serviceClient = IOHIDEventSystemClientCopyServiceForRegistryID (self.eventSystemClient, registryID.unsignedLongLongValue);
-    XCTAssert  ((IOHIDServiceClientRef)CFBridgingRetain(services[0]) == serviceClient);
+    XCTAssert((__bridge IOHIDServiceClientRef)services[0] == serviceClient);
+    XCTAssert(IOHIDServiceClientGetTypeID() == CFGetTypeID(serviceClient));
 
     XCTAssert(IOHIDServiceClientConformsTo (serviceClient, kHIDPage_AppleVendor, kHIDUsage_AppleVendor_Message));
     
-    XCTAssert (IOHIDEventSystemClientRegistryIDConformsTo (self.eventSystemClient, registryID.unsignedLongLongValue, kHIDPage_AppleVendor, kHIDUsage_AppleVendor_Message) == true);
-
     CFStringRef testPropertyKey = CFSTR ("ClientTestProperty");
     IOHIDServiceClientSetProperty(serviceClient, testPropertyKey, testPropertyKey);
     CFTypeRef value = IOHIDServiceClientCopyProperty (serviceClient, testPropertyKey);
@@ -241,7 +243,10 @@ static uint8_t descriptor[] = {
         IOHIDEventSystemClientUnregisterEventBlock (self.eventSystemClient, handler, (__bridge void * _Nullable)(self), NULL);
         IOHIDEventSystemClientRegisterEventBlock (self.eventSystemClient, handler, (__bridge void * _Nullable)(self), NULL);
         IOHIDEventSystemClientScheduleWithRunLoop (self.eventSystemClient, runLoop, kCFRunLoopDefaultMode);
-        IOHIDEventSystemClientCopyProperty(self.eventSystemClient, CFSTR (kIOHIDEventSystemClientIsUnresponsive));
+        CFTypeRef val = IOHIDEventSystemClientCopyProperty(self.eventSystemClient, CFSTR (kIOHIDEventSystemClientIsUnresponsive));
+        if (val) {
+            CFRelease(val);
+        }
     });
     CFRunLoopWakeUp(runLoop);
 
@@ -461,18 +466,42 @@ static uint8_t descriptor[] = {
     XCTAssert(self.events.count == 2, "events:%@", self.events);
 }
 
+- (void) MAC_OS_ONLY_TEST_CASE(testClientKeyboardEventDispatch) {
+
+    IOHIDEventRef event;
+    event = IOHIDEventCreateKeyboardEvent(kCFAllocatorDefault, mach_absolute_time(), kHIDPage_KeyboardOrKeypad, kHIDUsage_KeypadEqualSignAS400, true, 0);
+
+    TestLog("IOHIDEventSystemClientDispatchEvent:%@", event);
+    IOHIDEventSystemClientDispatchEvent(self.testEventSystemClient, event);
+    CFRelease(event);
+
+    event = IOHIDEventCreateKeyboardEvent(kCFAllocatorDefault, mach_absolute_time(), kHIDPage_KeyboardOrKeypad, kHIDUsage_KeypadEqualSignAS400, false, 0);
+
+    TestLog("IOHIDEventSystemClientDispatchEvent:%@", event);
+    IOHIDEventSystemClientDispatchEvent(self.testEventSystemClient, event);
+    CFRelease(event);
+
+    // Allow event to be dispatched
+    usleep(kDefaultReportDispatchCompletionTime);
+
+    XCTAssert(self.events.count == 2, "events:%@", self.events);
+}
+
 
 - (void)testEventSystemDebugDump {
     CFArrayRef value;
     
     value = IOHIDEventSystemClientCopyProperty(self.testEventSystemClient, CFSTR(kIOHIDClientRecordsKey));
     XCTAssert(value != NULL && CFGetTypeID(value) == CFArrayGetTypeID() && CFArrayGetCount(value) != 0, "kIOHIDClientRecordsKey:%@",  value);
+    CFRelease(value);
     
     value = IOHIDEventSystemClientCopyProperty(self.testEventSystemClient, CFSTR(kIOHIDServiceRecordsKey));
     XCTAssert(value != NULL && CFGetTypeID(value) == CFArrayGetTypeID() && CFArrayGetCount(value) != 0, "kIOHIDServiceRecordsKey:%@",  value);
+    CFRelease(value);
 
     value = IOHIDEventSystemClientCopyProperty(self.testEventSystemClient, CFSTR(kIOHIDSessionFilterDebugKey));
     XCTAssert(value != NULL && CFGetTypeID(value) == CFArrayGetTypeID() && CFArrayGetCount(value) != 0, "kIOHIDSessionFilterDebugKey:%@",  value);
+    CFRelease(value);
 
 }
 

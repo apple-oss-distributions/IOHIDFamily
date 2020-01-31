@@ -309,7 +309,26 @@ namespace base {
     XCTAssert (value == kHIDUsage_AppleVendorMotion_DeviceOrientationTypePortrait);
 
     CFRelease (usageEvent);
-    
+
+    IOHIDEventRef quatEvent = IOHIDEventCreateQuaternionOrientationEvent(kCFAllocatorDefault, mach_absolute_time(), 1, 2, 3, 4, 0);
+    HIDXCTAssertAndThrowTrue (quatEvent != NULL);
+
+    value = IOHIDEventGetIntegerValue (quatEvent, kIOHIDEventFieldOrientationOrientationType);
+    XCTAssert (value == kIOHIDOrientationTypeQuaternion);
+
+    value = IOHIDEventGetIntegerValue (quatEvent, kIOHIDEventFieldOrientationQuatW);
+    XCTAssert (value == 1);
+
+    value = IOHIDEventGetIntegerValue (quatEvent, kIOHIDEventFieldOrientationQuatX);
+    XCTAssert (value == 2);
+
+    value = IOHIDEventGetIntegerValue (quatEvent, kIOHIDEventFieldOrientationQuatY);
+    XCTAssert (value == 3);
+
+    value = IOHIDEventGetIntegerValue (quatEvent, kIOHIDEventFieldOrientationQuatZ);
+    XCTAssert (value == 4);
+
+    CFRelease (quatEvent);
 }
 
 - (void)testGenericGestureEvent {
@@ -347,6 +366,27 @@ namespace base {
     
 }
 
+- (void)testGameControllerEvent {
+     CFIndex value;
+    IOHIDEventRef gcEvent = IOHIDEventCreate(kCFAllocatorDefault, kIOHIDEventTypeGameController, mach_absolute_time(), 0);
+    HIDXCTAssertAndThrowTrue (gcEvent != NULL);
 
+    IOHIDEventSetIntegerValue (gcEvent, kIOHIDEventFieldGameControllerThumbstickButtonRight, 1);
+    value = IOHIDEventGetIntegerValue (gcEvent, kIOHIDEventFieldGameControllerThumbstickButtonRight);
+    XCTAssert (value == 1);
 
+    IOHIDEventSetIntegerValue (gcEvent, kIOHIDEventFieldGameControllerThumbstickButtonRight, 0);
+    value = IOHIDEventGetIntegerValue (gcEvent, kIOHIDEventFieldGameControllerThumbstickButtonRight);
+    XCTAssert (value == 0);
+
+    IOHIDEventSetIntegerValue (gcEvent, kIOHIDEventFieldGameControllerThumbstickButtonLeft, 1);
+    value = IOHIDEventGetIntegerValue (gcEvent, kIOHIDEventFieldGameControllerThumbstickButtonLeft);
+    XCTAssert (value == 1);
+
+    IOHIDEventSetIntegerValue (gcEvent, kIOHIDEventFieldGameControllerThumbstickButtonLeft, 0);
+    value = IOHIDEventGetIntegerValue (gcEvent, kIOHIDEventFieldGameControllerThumbstickButtonLeft);
+    XCTAssert (value == 0);
+    CFRelease(gcEvent);
+
+}
 @end

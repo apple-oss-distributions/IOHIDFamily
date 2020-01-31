@@ -34,10 +34,12 @@
 #include <IOKit/hid/IOHIDInterface.h>
 #include <IOKit/hid/IOHIDElement.h>
 #include <IOKit/hid/IOHIDKeys.h>
-#if TARGET_OS_EMBEDDED
+#if TARGET_OS_IPHONE
 #include <IOKit/hid/IOHIDEvent.h>
 #endif
 #include "IOHIDUtility.h"
+
+#include <HIDDriverKit/IOHIDEventService.h>
 
 enum 
 {
@@ -79,6 +81,7 @@ class   IOHIDKeyboard;
 class   IOHIDConsumer;
 struct  TransducerData;
 class   IOHIDEvent;
+class IOBufferMemoryDescriptor;
 
 #ifndef _IOKIT_HID_IOHIDEVENTTYPES_H
 typedef uint32_t IOHIDEventType;
@@ -102,9 +105,13 @@ struct DebugKeyAction {
  @abstract
  @discussion
  */
-class IOHIDEventService: public IOService
+#if defined(KERNEL) && !defined(KERNEL_PRIVATE)
+class __deprecated_msg("Use DriverKit") IOHIDEventService : public IOService
+#else
+class IOHIDEventService : public IOService
+#endif
 {
-    OSDeclareAbstractStructors( IOHIDEventService )
+    OSDeclareDefaultStructorsWithDispatch( IOHIDEventService )
     
     friend class IOHIDPointing;
     friend class IOHIDKeyboard;
@@ -118,7 +125,7 @@ private:
     IOHIDPointing *         _pointingNub;     //unused, keep to maintain layout
     IOHIDConsumer *         _consumerNub;
 
-    IONotifier *            _publishNotify;   //unused, keep to maintain layout
+    IOLock *                _clientDictLock;
     IORecursiveLock *       _nubLock;
     
     void *                  _reserved0;
@@ -132,6 +139,8 @@ private:
         IOCommandGate *         commandGate;
         
         OSDictionary *          clientDict;
+        IOBufferMemoryDescriptor  *eventMemory;
+        IOLock                    *eventMemLock;
 
         struct {
             UInt32                  deviceID;
@@ -144,7 +153,7 @@ private:
 
         struct {
             
-#if TARGET_OS_EMBEDDED
+#if TARGET_OS_IPHONE
             struct {
                 UInt32                  startMask;
                 UInt32                  mask;
@@ -181,7 +190,7 @@ private:
             UInt32                  buttonState;
         } relativePointer;
 
-#if !TARGET_OS_EMBEDDED
+#if TARGET_OS_OSX
 
         struct {
             UInt32                  buttonState;
@@ -194,7 +203,7 @@ private:
         UInt32                debugMask;
     };
 
-#if !TARGET_OS_EMBEDDED
+#if TARGET_OS_OSX
     static KeyValueMask   keyMonitorTable[];
     static DebugKeyAction debugKeyActionTable[];
 #endif
@@ -223,7 +232,7 @@ private:
 
     IOFixed                 determineResolution ( IOHIDElement * element );
                                     
-#if TARGET_OS_EMBEDDED
+#if TARGET_OS_IPHONE
     void                    debuggerTimerCallback(IOTimerEventSource *sender);
     
     void                    triggerDebugger();
@@ -238,7 +247,7 @@ private:
 
 protected:
 
-    virtual void            free();
+    virtual void            free(void) APPLE_KEXT_OVERRIDE;
         
 /*! @function handleOpen
     @abstract Handle a client open on the interface.
@@ -253,7 +262,7 @@ protected:
 
     virtual bool handleOpen(IOService *  client,
                             IOOptionBits options,
-                            void *       argument);
+                            void *       argument) APPLE_KEXT_OVERRIDE;
 
 /*! @function handleClose
     @abstract Handle a client close on the interface.
@@ -266,7 +275,7 @@ protected:
     @param client The client object that requested the close.
     @param options Options passed to IOService::close(). */
 
-    virtual void handleClose(IOService * client, IOOptionBits options);
+    virtual void handleClose(IOService * client, IOOptionBits options) APPLE_KEXT_OVERRIDE;
 
 /*! @function handleIsOpen
     @abstract Query whether a client has an open on the interface.
@@ -275,7 +284,7 @@ protected:
     @result true if the specified client, or any client if none (0) is
     specified, presently has an open on this object. */
 
-    virtual bool handleIsOpen(const IOService * client) const;
+    virtual bool handleIsOpen(const IOService * client) const APPLE_KEXT_OVERRIDE;
 
 /*! @function handleStart
     @abstract Prepare the hardware and driver to support I/O operations.
@@ -402,24 +411,24 @@ protected:
 public:
     bool                    readyForReports();
 
-    virtual bool            init(OSDictionary * properties = 0);
+    virtual bool            init(OSDictionary * properties = 0) APPLE_KEXT_OVERRIDE;
 
-    virtual bool            start( IOService * provider );
+    virtual bool            start( IOService * provider ) APPLE_KEXT_OVERRIDE;
     
-    virtual void            stop( IOService * provider );
+    virtual void            stop( IOService * provider ) APPLE_KEXT_OVERRIDE;
 
-    virtual bool            matchPropertyTable(OSDictionary * table, SInt32 * score);    
+    virtual bool            matchPropertyTable(OSDictionary * table, SInt32 * score) APPLE_KEXT_OVERRIDE;
     
     virtual IOReturn        setSystemProperties( OSDictionary * properties );
     
-    virtual IOReturn        setProperties( OSObject * properties );
+    virtual IOReturn        setProperties( OSObject * properties ) APPLE_KEXT_OVERRIDE;
   
     virtual IOReturn        newUserClient(
                               task_t owningTask,
                               void * securityID,
                               UInt32 type,
                               OSDictionary * properties,
-                              IOUserClient ** handler );
+                              IOUserClient ** handler ) APPLE_KEXT_OVERRIDE;
  
 protected:
     OSMetaClassDeclareReservedUsed(IOHIDEventService,  0);
@@ -687,7 +696,7 @@ protected:
     OSMetaClassDeclareReservedUsed(IOHIDEventService, 10);
     virtual UInt32          getPrimaryUsage();
  
-#if !TARGET_OS_EMBEDDED
+#if TARGET_OS_OSX
     static void debugActionSysdiagnose(IOHIDEventService* self, void *parameter);
     static void debugActionNMI(IOHIDEventService* self, void *parameter);
 #endif
@@ -845,8 +854,58 @@ protected:
     OSMetaClassDeclareReservedUsed(IOHIDEventService, 19);
     virtual void           closeForClient(IOService *client, void *context, IOOptionBits options = 0);
     
-    OSMetaClassDeclareReservedUnused(IOHIDEventService, 20);
-    OSMetaClassDeclareReservedUnused(IOHIDEventService, 21);
+    /*!
+     @function dispatchExtendedGameControllerEvent
+     @abstract Dispatch extended game controller event
+     @discussion This is meant to dispatch a conforming extended game controller event that includes the
+     following: Direction Pad, Face Buttons, Left and Right Joysticks and 2 Left and 2 Right Shoulder Buttons.
+     @param timeStamp   AbsoluteTime representing origination of event
+     @param dpadUp      Direction pad up with a fixed value between 0.0 and 1.0
+     @param dpadDown    Direction pad down with a fixed value between 0.0 and 1.0
+     @param dpadLeft    Direction pad left with a fixed value between 0.0 and 1.0
+     @param dpadRight   Direction pad right with a fixed value between 0.0 and 1.0
+     @param faceX       Face button X with a fixed value between 0.0 and 1.0
+     @param faceY       Face button Y with a fixed value between 0.0 and 1.0
+     @param faceA       Face button A with a fixed value between 0.0 and 1.0
+     @param faceB       Face button B with a fixed value between 0.0 and 1.0
+     @param shoulderL1  Top left shoulder button with a fixed value between 0.0 and 1.0
+     @param shoulderR1  Top right shoulder button with a fixed value between 0.0 and 1.0
+     @param shoulderL2  Bottom left shoulder button with a fixed value between 0.0 and 1.0
+     @param shoulderR2  Bottom right shoulder button with a fixed value between 0.0 and 1.0
+     @param joystickX   Joystick X axis with a fixed value between -1.0 and 1.0
+     @param joystickY   Joystick Y axis with a fixed value between -1.0 and 1.0
+     @param joystickZ   Joystick Z axis with a fixed value between -1.0 and 1.0
+     @param joystickRz  Joystick Rz axis with a fixed value between -1.0 and 1.0
+     @param thumbstickButtonLeft   Joystick left  thumbstick button with boolean value true/false for button down/up
+     @param thumbstickButtonRight  Joystick right thumbstick button with boolean value true/false for button down/up
+     @param options     Additional options to be defined.
+     */
+    OSMetaClassDeclareReservedUsed(IOHIDEventService, 20);
+    virtual void            dispatchExtendedGameControllerEventWithThumbstickButtons(
+                                                                AbsoluteTime                    timeStamp,
+                                                                IOFixed                         dpadUp,
+                                                                IOFixed                         dpadDown,
+                                                                IOFixed                         dpadLeft,
+                                                                IOFixed                         dpadRight,
+                                                                IOFixed                         faceX,
+                                                                IOFixed                         faceY,
+                                                                IOFixed                         faceA,
+                                                                IOFixed                         faceB,
+                                                                IOFixed                         shoulderL1,
+                                                                IOFixed                         shoulderR1,
+                                                                IOFixed                         shoulderL2,
+                                                                IOFixed                         shoulderR2,
+                                                                IOFixed                         joystickX,
+                                                                IOFixed                         joystickY,
+                                                                IOFixed                         joystickZ,
+                                                                IOFixed                         joystickRz,
+                                                                boolean_t                       thumbstickButtonLeft,
+                                                                boolean_t                       thumbstickButtonRight,
+                                                                IOOptionBits                    options         = 0 );
+    
+    OSMetaClassDeclareReservedUsed(IOHIDEventService, 21);
+    virtual IOHIDEvent *copyMatchingEvent(OSDictionary *matching);
+    
     OSMetaClassDeclareReservedUnused(IOHIDEventService, 22);
     OSMetaClassDeclareReservedUnused(IOHIDEventService, 23);
     OSMetaClassDeclareReservedUnused(IOHIDEventService, 24);
@@ -859,11 +918,19 @@ protected:
     OSMetaClassDeclareReservedUnused(IOHIDEventService, 31);
     
 public:
-    virtual void            close( IOService * forClient, IOOptionBits options = 0 );
+    virtual void            close( IOService * forClient, IOOptionBits options = 0 ) APPLE_KEXT_OVERRIDE;
     
-private:
-    bool                    openGated( IOService *client, IOOptionBits *pOptions, void *context, Action action);
-    void                    closeGated( IOService * forClient, IOOptionBits *pOptions);
+    /*! @function message
+     @abstract Receives messages delivered from an attached provider.
+     @discussion Handles the <code>kIOMessageDeviceSignaledWakeup</code> message
+     from a provider identifying the IOHIDDevice as the wakeup source.
+     @param type A type defined in <code>IOMessage.h</code>.
+     @param provider The provider from which the message originates.
+     @param argument An argument defined by the message type.
+     @result An IOReturn code defined by the message type.
+     */
+    
+    virtual IOReturn message(UInt32 type, IOService * provider, void * argument) APPLE_KEXT_OVERRIDE;
 };
 
 #endif /* !_IOKIT_HID_IOHIDEVENTSERVICE_H */
