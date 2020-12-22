@@ -37,18 +37,29 @@ OSDefineMetaClassAndStructors(IOHIDElementContainer, OSObject)
 
 #define DescriptorLog(fmt, ...) HIDLog("[ElementContainer] " fmt "\n", ##__VA_ARGS__);
 
+#define kMaxStackString 256
+
 static void printDescriptor(void *descriptor,
                             IOByteCount length)
 {
-    char str[length*2+1];
-    char *target = str;
-    
-    for (unsigned int i = 0; i < length; i++) {
-        uint8_t byte = ((uint8_t *)descriptor)[i];
-        target += snprintf(target, sizeof(str)-i*2, "%02x", byte);
+    IOByteCount descLen;
+    if (os_mul_and_add_overflow(length, 2, 1, &descLen)) {
+        HIDLogError("[ElementContainer] Unable to print descriptor. Descriptor length is invalid.\n");
+        return;
     }
-    
-    DescriptorLog("Descriptor: %s", str);
+
+    char *str = reinterpret_cast<char*>(IOMalloc(descLen));
+    if (str) {
+        char *target = str;
+        for (unsigned int i = 0; i < length; i++) {
+            uint8_t byte = ((uint8_t *)descriptor)[i];
+            target += snprintf(target, descLen-i*2, "%02x", byte);
+        }
+        DescriptorLog("Descriptor: %s", str);
+        IOFree(str, descLen);
+    } else {
+        HIDLogError("[ElementContainer] Unable to print descriptor. Memory allocation failed.\n");
+    }
 }
 
 bool IOHIDElementContainer::init(void *descriptor,
@@ -601,7 +612,7 @@ IOBufferMemoryDescriptor *IOHIDElementContainer::createElementValuesMemory()
     
     DescriptorLog("Element value capacity %ld", (long)capacity);
     
-    descriptor = IOBufferMemoryDescriptor::withOptions(kIOMemoryKernelUserShared,
+    descriptor = IOBufferMemoryDescriptor::withOptions(kIOMemoryUnshared,
                                                        capacity);
     require(descriptor, exit);
     
@@ -761,7 +772,7 @@ bool IOHIDElementContainer::processReport(IOHIDReportType reportType,
     
     // Get the first element in the report handler chain.
     element = GetHeadElement(GetReportHandlerSlot(reportID), reportType);
-    
+
     while (element) {
         if (shouldTickle) {
             *shouldTickle |= element->shouldTickleActivity();

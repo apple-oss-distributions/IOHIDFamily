@@ -33,6 +33,8 @@
 @synthesize psKey = _psKey;
 @synthesize elementStruct = _elementStruct;
 @synthesize defaultValueRef = _defaultValue;
+@synthesize isConstant = _isConstant;
+@synthesize isUpdated = _isUpdated;
 
 - (nullable instancetype)initWithElementRef:(nonnull IOHIDElementRef)elementRef
 {
@@ -81,6 +83,10 @@
 {
     if (_value) {
         CFRelease(_value);
+    }
+
+    if (_defaultValue) {
+        CFRelease(_defaultValue);
     }
     
     if (_element) {
@@ -139,6 +145,15 @@
 
 -(void)setValueRef:(IOHIDValueRef)valueRef
 {
+    
+    // what if valueRef == _value,
+    // in that case underline value is already
+    // released
+    
+    if (_value == valueRef) {
+        return;
+    }
+    
     if (_value) {
         CFRelease(_value);
         _value = NULL;
@@ -158,6 +173,10 @@
 
 -(void)setDefaultValueRef:(IOHIDValueRef)defaultValueRef
 {
+    if (_defaultValue == defaultValueRef) {
+        return;
+    }
+
     if (_defaultValue) {
         CFRelease(_defaultValue);
     }
@@ -251,11 +270,6 @@
 - (uint8_t)reportID
 {
     return IOHIDElementGetReportID(_element);
-}
-
-- (uint32_t)valueLocation
-{
-    return _elementStruct.valueLocation;
 }
 
 - (uint32_t)usageMin

@@ -103,7 +103,9 @@ HIDDisplayDeviceRef __nullable HIDDisplayCreateDeviceWithContainerID(CFStringRef
  * given container ID. If no corresponding
  * HID device matches container ID  , this will return NULL.
  * Caller is expected to create only single instance of HIDDisplayPresetIntereface per system for all HIDDisplayPreset APIs
- * as these APIs are not thread safe.
+ * as these APIs are not thread safe. This api shouldn't be used in case underlying service is expected to terminate / add while
+ * api is in process. Calling this for terminated or in progress termination service containerID may have undesirable results.
+ * Use HIDDisplayCreatePresetInterfaceWithService instead.
  *
  * @param containerID
  * Attributes which can uniquely identify display device.
@@ -132,21 +134,6 @@ HIDDisplayPresetInterfaceRef __nullable HIDDisplayCreatePresetInterfaceWithConta
  * Returns an instance of a hidDisplayInterface object on success which has to be released by caller.
  */
 HIDDisplayPresetInterfaceRef __nullable HIDDisplayCreatePresetInterfaceWithService(io_service_t service);
-
-
-/*!
- * HIDDisplayGetContainerID
- *
- * @abstract
- * Get ContainerID for hid preset device
- *
- * @discussion
- * get container id published on device interface or any of it's parent
- *
- * @result
- * CFStringRef for containerID. Caller shouldn't release any returned CFString
- */
-CFStringRef __nullable HIDDisplayGetContainerID(HIDDisplayPresetInterfaceRef hidDisplayInterface);
 
 /*!
  * HIDDisplayGetPresetCount
@@ -181,7 +168,8 @@ CFIndex HIDDisplayGetPresetCount(HIDDisplayPresetInterfaceRef hidDisplayInterfac
  * field which will be filled with  error code on failure.
  *
  * @result
- * Returns factory default preset index of display device on success and -1 on failure.
+ * Returns factory default preset index of display device on success and -1 on failure. Additionally, if an error occurs and the error parameter is non-NULL, the error parameter will be set to a CFError
+ * describing the problem, which the caller must release.
  */
 CFIndex HIDDisplayGetFactoryDefaultPresetIndex(HIDDisplayPresetInterfaceRef hidDisplayInterface, CFErrorRef* error);
 
@@ -219,7 +207,8 @@ CFArrayRef __nullable HIDDisplayGetPresetCapabilities(HIDDisplayPresetInterfaceR
  * field which will be filled with  error code on failure.
  *
  * @result
- * Returns active preset index of display device on success and -1 on failure.
+ * Returns active preset index of display device on success and -1 on failure.Additionally, if an error occurs and the error parameter is non-NULL, the error parameter will be set to a
+ *  CFError describing the problem, which the caller must release.
  */
 CFIndex HIDDisplayGetActivePresetIndex(HIDDisplayPresetInterfaceRef hidDisplayInterface, CFErrorRef* error);
 
@@ -242,7 +231,8 @@ CFIndex HIDDisplayGetActivePresetIndex(HIDDisplayPresetInterfaceRef hidDisplayIn
  * field which will be filled with  error code on failure.
  *
  * @result
- * Returns true on success.
+ * Returns true on success.Additionally, if an error occurs and the error parameter is non-NULL, the error parameter will be set to a CFError describing the problem,
+ *  which the caller must release.
  */
 bool HIDDisplaySetActivePresetIndex(HIDDisplayPresetInterfaceRef hidDisplayInterface, CFIndex presetIndex, CFErrorRef* error);
 
@@ -268,7 +258,8 @@ bool HIDDisplaySetActivePresetIndex(HIDDisplayPresetInterfaceRef hidDisplayInter
  * field which will be filled with  error code on failure.
  *
  * @result
- * Returns preset info on success. preset info is dictionary containing preset fields and value
+ * Returns preset info on success. preset info is dictionary containing preset fields and value. Additionally, if an error occurs and the error parameter is non-NULL, the error parameter will be set to a CFError describing
+ * the problem, which the caller must release.
  */
 CFDictionaryRef __nullable HIDDisplayCopyPreset(HIDDisplayPresetInterfaceRef hidDisplayInterface, CFIndex presetIndex, CFErrorRef *error);
 
@@ -297,7 +288,7 @@ CFDictionaryRef __nullable HIDDisplayCopyPreset(HIDDisplayPresetInterfaceRef hid
  * field which will be filled with  error code on failure.
  *
  * @result
- * Returns true on success.
+ * Returns true on success. Additionally, if an error occurs and the error parameter is non-NULL, the error parameter will be set to a CFError describing the problem, which the caller must release.
  */
 bool HIDDisplaySetPreset(HIDDisplayPresetInterfaceRef hidDisplayInterface, CFIndex presetIndex, CFDictionaryRef info, CFErrorRef *error);
 

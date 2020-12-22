@@ -73,8 +73,8 @@ private:
     static void setEventCallback(void * self, IOHIDServiceEventCallback callback, void * target, void * refcon);
   
     void setupAcceleration ();
-    void setupPointerAcceleration();
-    void setupScrollAcceleration();
+    void setupPointerAcceleration(double pointerAccelerationMultiplier);
+    void setupScrollAcceleration(double scrollAccelerationMultiplier);
   
     void accelerateChildrens(IOHIDEventRef event);
     void accelerateEvent(IOHIDEventRef event);
@@ -90,6 +90,8 @@ private:
     double                      _pointerAcceleration;
     double                      _scrollAcceleration;
     boolean_t                   _leagacyShim;
+    bool                        _pointerAccelerationSupported;
+    bool                        _scrollAccelerationSupported;
   
     void serialize (CFMutableDictionaryRef dict) const;
   

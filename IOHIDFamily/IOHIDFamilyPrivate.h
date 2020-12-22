@@ -51,9 +51,38 @@ void IOHIDSystemActivityTickle(SInt32 nxEventType, IOService *sender);
 void handle_stackshot_keychord(uint32_t keycode);
 
 #define NX_HARDWARE_TICKLE  (NX_LASTEVENT+1)
+
+#define kIOHIDDeviceWillTerminate     iokit_family_msg(sub_iokit_hidsystem, 8)
 #endif
 
 bool isSingleUser();
+
+/*!
+* @method getFixedValue
+*
+* @abstract
+* convert length in cm to IOFixed milimeter for given unit exponent.
+*
+* @discussion
+* As per HID spec  unit and unit exponent can be associated with given value.
+* Example :
+* Value : 0x100, Unit : 0x11, Unit Exponent : 0xE represents 25.6 mm (256 * 10–2 cm).
+* This function converts value based on unit and unit exponent to IOFixed. Currenlty
+* it only supports unit as length in cm.
+*
+* @param value
+* number that need to be converted to IOFixed
+*
+* @param unit
+* associated unit as per HID spec.
+*
+* @param exponent
+* associated unit exponent as per HID spec.
+*
+* @result
+* Returns IOFixed conversion of number in cm scale if exponent is valid (<=0xF), otherwise will return given value in IOFixed.
+*/
+IOFixed getFixedValue(uint32_t value, uint32_t unit, uint32_t exponent);
 
 #define kHIDDtraceDebug "hid_dtrace_debug"
 

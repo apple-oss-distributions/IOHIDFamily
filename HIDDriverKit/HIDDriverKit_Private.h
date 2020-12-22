@@ -29,12 +29,9 @@
 #undef DEBUG_ASSERT_MESSAGE
 #define DEBUG_ASSERT_MESSAGE
 
-// TODO: need to fix these in IOHIDEventStructDefs.h
-typedef unsigned char Boolean;
-typedef unsigned int boolean_t;
-
 #include <HIDDriverKit/HIDDriverKit.h>
 #include <HIDDriverKit/IOHIDEventServiceKeys_Private.h>
+#include <HIDDriverKit/IOHIDEventServiceKeys.h>
 #include <HIDDriverKit/IOHIDEventTypes.h>
 #include <HIDDriverKit/AppleHIDUsageTables.h>
 #include <HIDDriverKit/IOHIDEventData.h>

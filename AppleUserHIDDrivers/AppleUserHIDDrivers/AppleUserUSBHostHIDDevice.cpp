@@ -18,6 +18,8 @@
 #undef  super
 #define super IOUserUSBHostHIDDevice
 
+#define kNativeInstrumentsVID 0x17CC
+
 enum {
     kAppleUserUSBHostHIDDeviceDisable           = 0x1,
     kAppleUserUSBHostHIDDeviceOverrideTopCase   = 0x2
@@ -41,7 +43,7 @@ kern_return_t
 IMPL(AppleUserUSBHostHIDDevice, Start)
 {
     kern_return_t   ret;
-    boolean_t       status;
+    bool            status;
     uint32_t        debug = 0;
     OSDictionaryPtr properties = NULL;
 

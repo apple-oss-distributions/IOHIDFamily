@@ -97,12 +97,20 @@
     _properties[@(kIOPSProductIDKey)] = props[@(kIOHIDProductIDKey)];
     _properties[@(kIOPSAccessoryIdentifierKey)] = props[@(kIOHIDSerialNumberKey)];
     
+    if ([props objectForKey:@(kIOHIDModelNumberKey)]) {
+        _properties[@(kIOPSModelNumber)] = [props objectForKey:@(kIOHIDModelNumberKey)];
+    }
+    
+    
     uint32_t usagePage = [props[@(kIOHIDPrimaryUsagePageKey)] intValue];
     uint32_t usage = [props[@(kIOHIDPrimaryUsageKey)] intValue];
     
-    if (usagePage == kHIDPage_GenericDesktop &&
-        usage == kHIDUsage_GD_Keyboard) {
+    if (props[@(kIOPSAccessoryCategoryKey)]) {
+        _properties[@(kIOPSAccessoryCategoryKey)] = props[@(kIOPSAccessoryCategoryKey)];
+    } else if (usagePage == kHIDPage_GenericDesktop && usage == kHIDUsage_GD_Keyboard) {
         _properties[@(kIOPSAccessoryCategoryKey)] = @(kIOPSAccessoryCategoryKeyboard);
+    } else if (usagePage == kHIDPage_GenericDesktop && usage == kHIDUsage_GD_Mouse) {
+        _properties[@(kIOPSAccessoryCategoryKey)] = @(kIOPSAccessoryCategoryMouse);
     } else if (props[@(kIOHIDGameControllerTypeKey)]) {
         _properties[@(kIOPSAccessoryCategoryKey)] = @(kIOPSAccessoryCategoryGameController);
     }
@@ -268,6 +276,7 @@
                 switch (element.usage) {
                     case kHIDUsage_AppleVendor_Color:
                         element.psKey = @(kIOPSDeviceColor);
+                        element.isConstant = YES;
                         break;
                 }
             default:
@@ -301,12 +310,30 @@
         } else {
             [_elements.feature addObject:element];
             
+            /* Constant feature elements are the one which needs to be updated only one time
+             * We should have this option  propogated on hid element . This work is tracked by
+             * rdar://problem/55080850 and following changes need to be revisited
+             */
+            
+            if (element.isConstant && !element.isUpdated) {
+                
+                UPSLog("Feature element (UP : %x, U : %x) has const data, retrieve current value and skip polling",element.usagePage, element.usage);
+                // Retrieve current value for element
+                [self updateElements:@[element]];
+                element.isUpdated = YES;
+                continue;
+            }
+            
+            UPSLog("Feature element (UP : %x, U : %x) added for polling", element.usagePage, element.usage);
+            
             /*
              * Feature elements should be polled every 5 seconds. We create a
              * timer here and return it with the array we pass back in the
              * createAsyncEventSource method.
              */
             if (!_timer) {
+                UPSLog("Create time for polling feature reports");
+                
                 _timer = [[NSTimer alloc] initWithFireDate:[NSDate date]
                                                   interval:5.0
                                                    repeats:YES
@@ -381,24 +408,77 @@
 
 - (void)updateElements:(NSArray *)elements
 {
+    IOReturn ret = kIOReturnError;
+    NSInteger elementsToUpdate = 0;
+    
+    if (!_transaction) {
+        UPSLogError("Invalid transaction");
+        return;
+    }
+    
+    ret = (*_transaction)->setDirection(_transaction, kIOHIDTransactionDirectionTypeInput, 0);
+    
+    if (ret) {
+        UPSLogError("Failed to set transaction direction %x",ret);
+        return;
+    }
+    
     for (HIDLibElement *element in elements) {
-        IOReturn ret = kIOReturnError;
+        
+        // we shouldn't query multiple times if given element is const feature element.
+        if (element.isConstant && element.isUpdated) {
+            UPSLog("Feature element UP : %x , U : %x updated, skip device call",element.usagePage, element.usage);
+            continue;
+        }
+        
+        ret = (*_transaction)->addElement(_transaction, element.elementRef, 0);
+        if (ret) {
+            UPSLog("Failed to add element to transaction %x",ret);
+            continue;
+        }
+        elementsToUpdate++;
+    }
+    
+    if (elementsToUpdate == 0) {
+        UPSLog("Nothing to commit skip");
+        (*_transaction)->clear(_transaction, 0);
+        return;
+    }
+    
+    ret = (*_transaction)->commit(_transaction, 0, 0, 0, 0);
+    if (ret != kIOReturnSuccess) {
+        (*_transaction)->clear(_transaction, 0);
+        UPSLogError("Failed to commit input element transaction with error %x",ret);
+        return;
+    }
+    
+    for (HIDLibElement *element in elements) {
+        
         IOHIDValueRef value = NULL;
         
-        ret = (*_device)->getValue(_device,
-                                   element.elementRef,
-                                   &value, 0, NULL, NULL,
-                                   kHIDGetElementValueForcePoll);
+        // we shouldn't query multiple times if given element is const feature element.
+        if (element.isConstant && element.isUpdated) {
+            UPSLog("Feature element UP : %x , U : %x updated, skip device call",element.usagePage, element.usage);
+            continue;
+        }
+        
+        ret = (*_transaction)->getValue(_transaction, element.elementRef, &value, 0);
         
         if (ret == kIOReturnSuccess && value) {
             element.valueRef = value;
         }
     }
+    
+    (*_transaction)->clear(_transaction, 0);
+    return;
 }
 
 - (BOOL)updateEvent
 {
     bool updated = false;
+    bool isCharging = false;
+    bool isDischarging = false; // Keeping this seperate bool for case when both charge / discharge is 1 (possible ??)
+    bool isACSource = false;
     
     /*
      * Get the latest element values. Our input elements will already be updated
@@ -412,7 +492,7 @@
                                               psKey:element.psKey];
         
         if (latest && ![element isEqual:latest]) {
-            UPSLog("Skipping duplicate element with key %@\n", element.psKey);
+            UPSLog("Skipping duplicate element (UP : %x U : %x Type : %u IV: %ld) with key %@\n",element.usagePage, element.usage, (unsigned int)element.type, (long)element.integerValue, element.psKey);
             continue;
         }
         
@@ -458,21 +538,11 @@
                 switch (element.usage) {
                     case kHIDUsage_BS_Charging:
                         newValue = element.integerValue ? @YES : @NO;
-                        // Also update kIOPSPowerSourceStateKey
-                        if (element.integerValue) {
-                            _upsEvent[@(kIOPSPowerSourceStateKey)] = @(kIOPSACPowerValue);
-                        } else {
-                            _upsEvent[@(kIOPSPowerSourceStateKey)] = @(kIOPSBatteryPowerValue);
-                        }
+                        isCharging |= (element.integerValue ? 1 : 0);
                         break;
                     case kHIDUsage_BS_Discharging:
                         newValue = element.integerValue ? @FALSE : @TRUE;
-                        // Also update kIOPSPowerSourceStateKey
-                        if (element.integerValue) {
-                            _upsEvent[@(kIOPSPowerSourceStateKey)] = @(kIOPSBatteryPowerValue);
-                        } else {
-                            _upsEvent[@(kIOPSPowerSourceStateKey)] = @(kIOPSACPowerValue);
-                        }
+                        isDischarging |= (element.integerValue ? 1 : 0);
                         break;
                     case kHIDUsage_BS_AbsoluteStateOfCharge:
                     case kHIDUsage_BS_RemainingCapacity:
@@ -538,6 +608,7 @@
                     }
                     case kHIDUsage_BS_ACPresent:
                         newValue = element.integerValue ? @(kIOPSACPowerValue) : @(kIOPSBatteryPowerValue);
+                        isACSource |= (element.integerValue ? 1 : 0);
                         break;
                 }
                 break;
@@ -604,6 +675,27 @@
         }
     }
     
+    // rdar://problem/57132356 , we have logic to report power state
+    // based on 3 usages kHIDUsage_BS_Charging, kHIDUsage_BS_Discharging,
+    // kHIDUsage_BS_ACPresent. Following is observation from Cyberpower UPS
+    // device :
+    // 1. When UPS power  < max power -> BS Charging is reported 1
+    // 2. When UPS power == max power -> BS Charging is reported 0
+    // Case 2 is persistant across reboots, once battery is fully charged
+    // it will report 0 for this usage
+    // 3. When UPS is unlpuged from power source , or battery consumption >
+    // battery charge rate it reports Battery Discharging as 1
+    // 4. AC preset usage truely convey power source
+    UPSLog("Power Source status isACSource : %s , isCharging : %s , isDischarging : %s", isACSource ? "Yes" : "No", isCharging ? "Yes" : "No", isDischarging ? "Yes" : "No");
+    
+    if (isACSource || (isCharging && !isDischarging)) {
+        _upsEvent[@(kIOPSPowerSourceStateKey)] = @(kIOPSACPowerValue);
+    } else {
+        _upsEvent[@(kIOPSPowerSourceStateKey)] = @(kIOPSBatteryPowerValue);
+    }
+    
+    // When both charging and discharging are reported this should be battery (since AC is not reported in first check)
+    
     return updated;
 }
 
@@ -664,7 +756,16 @@ static void _valueAvailableCallback(void *context,
                                             &deviceProperties,
                                             kCFAllocatorDefault,
                                             0);
-    require(ret == kIOReturnSuccess && deviceProperties, exit);
+    require_action(ret == kIOReturnSuccess, exit, {
+        UPSLogError("Failed to query properties with error %x",(int)ret);
+    });
+    
+    
+    require_action(deviceProperties, exit, {
+        UPSLogError("deviceProperties not valid");
+        ret = kIOReturnInvalid;
+    });
+    
     
     [self parseProperties:(__bridge NSDictionary *)deviceProperties];
     
@@ -672,29 +773,78 @@ static void _valueAvailableCallback(void *context,
                                             kIOHIDDeviceTypeID,
                                             kIOCFPlugInInterfaceID,
                                             &plugin, &score);
-    require(ret == kIOReturnSuccess && plugin, exit);
+    require_action(ret == kIOReturnSuccess , exit, {
+        UPSLogError("Failed to create plugin interface with error %x",(int)ret);
+    });
+    
+    require_action(plugin, exit, {
+        UPSLogError("Plugin not valid");
+        ret = kIOReturnInvalid;
+    });
     
     result = (*plugin)->QueryInterface(plugin,
                             CFUUIDGetUUIDBytes(kIOHIDDeviceDeviceInterfaceID),
                             (LPVOID *)&_device);
-    require(result == S_OK && _device, exit);
+    require_action(result == S_OK , exit, {
+        UPSLogError("Failed to get device interface with error %d",(int)result);
+        ret = kIOReturnError;
+    });
+    
+    require_action(_device, exit, {
+        UPSLogError("Device not valid");
+        ret = kIOReturnInvalid;
+    });
     
     ret = (*_device)->open(_device, 0);
-    require_noerr(ret, exit);
+    require_action(ret == kIOReturnSuccess, exit, {
+         UPSLogError("Failed to open device with error %x",(int)ret);
+    });
     
     ret = (*_device)->copyMatchingElements(_device, nil, &elements, 0);
-    require(ret == kIOReturnSuccess && elements, exit);
+    require_action(ret == kIOReturnSuccess, exit, {
+        UPSLogError("Failed to copy matching elements with error %x",(int)ret);
+    });
     
-    [self parseElements:(__bridge NSArray *)elements];
+    require_action(elements, exit, {
+        UPSLogError("Elements not valid");
+        ret = kIOReturnInvalid;
+    });
     
-    // get the initial values for our input/feature elements
-    [self updateElements:_elements.input];
-    
+   
     // setup queue
     result = (*_device)->QueryInterface(_device,
                             CFUUIDGetUUIDBytes(kIOHIDDeviceQueueInterfaceID),
                             (LPVOID *)&_queue);
-    require(result == S_OK && _queue, exit);
+    require_action(result == S_OK, exit, {
+        UPSLogError("Failed to get queue interface with error %d",(int)result);
+        ret = kIOReturnError;
+        
+    });
+    
+    require_action(_queue, exit, {
+        UPSLogError("Queue not valid");
+        ret = kIOReturnInvalid;
+    });
+    
+    // setup transaction
+    result = (*_device)->QueryInterface(_device,
+                        CFUUIDGetUUIDBytes(kIOHIDDeviceTransactionInterfaceID),
+                        (LPVOID *)&_transaction);
+    require_action(result == S_OK , exit, {
+        UPSLogError("Failed to get transaction interface with error %d",(int)result);
+        ret = kIOReturnError;
+    });
+    
+    require_action(_transaction, exit, {
+        UPSLogError("Transaction not valid");
+        ret = kIOReturnInvalid;
+    });
+    
+    (*_transaction)->setDirection(_transaction,
+                                  kIOHIDTransactionDirectionTypeOutput, 0);
+    
+    [self parseElements:(__bridge NSArray *)elements];
+    
     
     (*_queue)->setDepth(_queue, (uint32_t)_elements.input.count, 0);
     
@@ -716,14 +866,9 @@ static void _valueAvailableCallback(void *context,
     ret = (*_queue)->start(_queue, 0);
     require_noerr(ret, exit);
     
-    // setup transaction
-    result = (*_device)->QueryInterface(_device,
-                        CFUUIDGetUUIDBytes(kIOHIDDeviceTransactionInterfaceID),
-                        (LPVOID *)&_transaction);
-    require(result == S_OK && _transaction, exit);
-    
-    (*_transaction)->setDirection(_transaction,
-                                  kIOHIDTransactionDirectionTypeOutput, 0);
+    // get the initial values for our input/feature elements
+    [self updateElements:_elements.input];
+    [self updateEvent];
     
     ret = kIOReturnSuccess;
     
@@ -876,6 +1021,13 @@ static IOReturn _sendCommand(void *iunknown, CFDictionaryRef command)
     if (!command || !command.count) {
         return kIOReturnBadArgument;
     }
+    
+    if (!_transaction) {
+        UPSLogError("Invalid transaction");
+        return kIOReturnError;
+    }
+    
+    (*_transaction)->setDirection(_transaction, kIOHIDTransactionDirectionTypeOutput, 0);
     
     [command enumerateKeysAndObjectsUsingBlock:^(NSString *key,
                                                  id value,

@@ -2,7 +2,7 @@
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
- * Copyright (c) 1999-2003 Apple Computer, Inc.  All Rights Reserved.
+ * Copyright (c) 1999-2020 Apple Computer, Inc.  All Rights Reserved.
  * 
  * This file contains Original Code and/or Modifications of Original Code
  * as defined in and that are subject to the Apple Public Source License
@@ -240,8 +240,8 @@ typedef uint32_t IOHIDOptionsType;
     to enqueue all events, relative or absolute, regardless of change.
 */
 enum {
-    kIOHIDQueueOptionsTypeNone     = 0x00,
-    kIOHIDQueueOptionsTypeEnqueueAll = 0x01
+    kIOHIDQueueOptionsTypeNone              = 0x00,
+    kIOHIDQueueOptionsTypeEnqueueAll        = 0x01
 };
 typedef uint32_t IOHIDQueueOptionsType;
 
@@ -251,11 +251,13 @@ typedef uint32_t IOHIDQueueOptionsType;
   @constant kIOHIDStandardTypeANSI ANSI.
   @constant kIOHIDStandardTypeISO ISO.
   @constant kIOHIDStandardTypeJIS JIS.
+  @constant kIOHIDStandardTypeUnspecified.
 */
 enum {
-    kIOHIDStandardTypeANSI                = 0,
-    kIOHIDStandardTypeISO                 = 1,
-    kIOHIDStandardTypeJIS                 = 2
+    kIOHIDStandardTypeANSI                = 0x0,
+    kIOHIDStandardTypeISO                 = 0x1,
+    kIOHIDStandardTypeJIS                 = 0x2,
+    kIOHIDStandardTypeUnspecified         = 0xFFFFFFFF,
 };
 typedef uint32_t IOHIDStandardType;
 
@@ -357,6 +359,35 @@ typedef uint32_t IOHIDStandardType;
                 descriptor.
  */
 #define kIOHIDSensorPropertyMaxFIFOEventsKey    "MaxFIFOEvents"
+
+/*!
+   @defined    kIOHIDDigitizerSurfaceSwitchKey
+   @abstract   Property to turn on / of surface digitizer contact reporting
+   @discussion To allow for better power management, a host may wish to indicate what it would like a touchpad digitizer to not report surface digitizer contacts by clearing this
+                flag. By default, upon cold‐boot/power cycle, touchpads that support reporting surface
+                contacts shall do so by default.
+*/
+
+#define kIOHIDDigitizerSurfaceSwitchKey "DigitizerSurfaceSwitch"
+
+
+/*!
+     @defined    kIOHIDPointerAccelerationSupportKey
+     @abstract   Property to turn enable/disable acceleration of relative pointer events
+     @discussion A boolean value to enable devices that report movement precisely but using relative positions,
+                    if false the events from the device will not have acceleration applied to the event value calculation.
+                    If the key is not set then the device will have acceleration applied to it's events by default.
+ */
+#define kIOHIDPointerAccelerationSupportKey    "HIDSupportsPointerAcceleration"
+
+/*!
+     @defined    kIOHIDScrollAccelerationSupportKey
+     @abstract   Property to turn enable/disable acceleration of scroll events
+     @discussion A boolean value to enable devices that report scroll precisely but using relative positions,
+                    if false the events from the device will not have acceleration applied to the event value calculation.
+                    If the key is not set then the device will have acceleration applied to it's events by default.
+ */
+#define kIOHIDScrollAccelerationSupportKey     "HIDSupportsScrollAcceleration"
 
 __END_DECLS
 

@@ -36,6 +36,9 @@
     IOHIDValueRef       _defaultValue;
     NSString            *_psKey;
     IOHIDElementStruct  _elementStruct;
+    BOOL                _isConstant;
+    BOOL                _isUpdated;
+    
 }
 
 - (nullable instancetype)initWithElementRef:(nonnull IOHIDElementRef)elementRef;
@@ -54,6 +57,8 @@
 @property (readonly)        uint64_t            timestamp;
 @property (readonly)        NSInteger           length;
 @property (readonly)        IOHIDElementStruct  elementStruct;
+@property                   BOOL                isConstant;
+@property                   BOOL                isUpdated;
 
 /*
  * These properties can be predicated against using the kIOHIDElement keys.
@@ -68,7 +73,6 @@
 @property (readonly)        uint32_t                    unit;
 @property (readonly)        uint8_t                     unitExponent;
 @property (readonly)        uint8_t                     reportID;
-@property (readonly)        uint32_t                    valueLocation;
 @property (readonly)        uint32_t                    usageMin;
 @property (readonly)        uint32_t                    usageMax;
 @property (readonly)        IOHIDElementCollectionType  collectionType;

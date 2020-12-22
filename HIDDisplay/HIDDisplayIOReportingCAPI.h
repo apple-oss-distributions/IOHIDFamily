@@ -35,7 +35,8 @@ typedef void (^IOReportingInputDataHandler)(CFDataRef inputData);
  * given container ID. If no corresponding
  * HID device matches container ID  , this will return NULL.
  * Caller should create only  single instance of HIDDisplayIOReportingInterface  per system for all HIDDisplayIOReporting APIs
- * as these APIs are not thread safe.
+ * as these APIs are not thread safe.  This api shouldn't be used in case underlying service is expected to terminate / add while
+ * api is in process. Calling this for terminated or in progress termination service containerID may have undesirable results.
  *
  * @param containerID
  * Attributes which can uniquely identify display device.
@@ -163,7 +164,7 @@ void HIDDisplayIOReportingCancel(HIDDisplayIOReportingInterfaceRef hidDisplayInt
  * field which will be filled with  error code on failure.
  *
  * @result
- * Returns true if data send is successful.
+ * Returns true if data send is successful.Additionally, if an error occurs and the error parameter is non-NULL, the error parameter will be set to a CFError describing the problem, which the caller must release.
  *
  */
 bool HIDDisplayIOReportingSetOutputData(HIDDisplayIOReportingInterfaceRef hidDisplayInterface, CFDataRef data, CFErrorRef* error);
