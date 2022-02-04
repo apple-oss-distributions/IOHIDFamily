@@ -46,11 +46,7 @@
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/pwr_mgt/IOPM.h>
 #include "IOHIDWorkLoop.h"
-#if TARGET_OS_IPHONE
-class IOGraphicsDevice;
-#else
 #include <IOKit/graphics/IOGraphicsDevice.h>
-#endif
 #include <IOKit/hidsystem/IOHIDevice.h>
 #include <IOKit/hidsystem/IOHIDShared.h>
 #include <IOKit/hidsystem/IOHIDTypes.h>
@@ -75,6 +71,9 @@ class IOHIDKeyboardDevice;
 class IOHIDPointingDevice;
 class IOHIDEvent;
 class IOFixedPoint64;
+struct _evScreen;
+
+typedef volatile _evScreen EVScreen;
 
 #if defined(KERNEL) && !defined(KERNEL_PRIVATE)
 class __deprecated_msg("Use DriverKit") IOHIDSystem : public IOService
@@ -108,8 +107,7 @@ private:
                         // FIXME: why is this ivar lleqSize an ivar? {Dan]
 
 	// Screens list
-	vm_size_t           evScreenSize;	// Byte size of evScreen array
-	void                *evScreen;	// array of screens known to driver
+	EVScreen * evScreen;	// array of screens known to driver
 	int             screens;	// running total of allocated screens
 	UInt32          cursorScreens;	// bit mask of screens with cursor present
     UInt32          cursorPinScreen;// a screen to pin against

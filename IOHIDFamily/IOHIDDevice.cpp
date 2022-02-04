@@ -25,7 +25,7 @@
 #include <AssertMacros.h>
 #include <TargetConditionals.h>
 
-#include <IOKit/IOLib.h>    // IOMalloc/IOFree
+#include <IOKit/IOLib.h>    // IOMalloc*/IOFree*
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/hidsystem/IOHIDSystem.h>
 #include <IOKit/IOEventSource.h>
@@ -54,10 +54,8 @@
 #include <os/overflow.h>
 #include <stdatomic.h>
 
-#if TARGET_OS_OSX
 #include "IOHIKeyboard.h"
 #include "IOHIPointing.h"
-#endif
 
 #include <IOKit/hidsystem/IOHIDShared.h>
 
@@ -170,8 +168,8 @@ bool IOHIDAsyncReportQueue::checkForWork()
                 }
             }
 
-            IOFree(entry->reportData, entry->reportLength);
-            IODelete(entry, AsyncReportEntry, 1);
+            IOFreeData(entry->reportData, entry->reportLength);
+            IOFreeType(entry, AsyncReportEntry);
 
             IOLockLock(fQueueLock);
         }
@@ -194,16 +192,14 @@ IOReturn IOHIDAsyncReportQueue::postReport(
 {
     AsyncReportEntry *entry;
 
-    entry = IONew(AsyncReportEntry, 1);
+    entry = IOMallocType(AsyncReportEntry);
     if (!entry)
         return kIOReturnError;
-
-    bzero(entry, sizeof(AsyncReportEntry));
 
     entry->timeStamp = timeStamp;
 
     entry->reportLength = report->getLength();
-    entry->reportData = (uint8_t *)IOMalloc(entry->reportLength);
+    entry->reportData = (uint8_t *)IOMallocData(entry->reportLength);
 
     if (entry->reportData) {
         report->readBytes(0, entry->reportData, entry->reportLength);
@@ -221,7 +217,7 @@ IOReturn IOHIDAsyncReportQueue::postReport(
 
         signalWorkAvailable();
     } else {
-        IODelete(entry, AsyncReportEntry, 1);
+        IOFreeType(entry, AsyncReportEntry);
     }
 
     return kIOReturnSuccess;
@@ -276,12 +272,10 @@ static SInt32 g3DGameControllerCount = 0;
 
 bool IOHIDDevice::init( OSDictionary * dict )
 {
-    _reserved = IONew( ExpansionData, 1 );
+    _reserved = IOMallocType(ExpansionData);
 
     if (!_reserved)
         return false;
-
-	bzero(_reserved, sizeof(ExpansionData));
     
     // Create an OSSet to store client objects. Initial capacity
     // (which can grow) is set at 2 clients.
@@ -300,6 +294,7 @@ bool IOHIDDevice::init( OSDictionary * dict )
 void IOHIDDevice::free()
 {
     OSSafeReleaseNULL(_elementArray);
+    OSSafeReleaseNULL(_interfaceNubs);
     OSSafeReleaseNULL(_hierarchElements);
     OSSafeReleaseNULL(_interfaceElementArrays);
     OSSafeReleaseNULL(_elementContainer);
@@ -325,9 +320,9 @@ void IOHIDDevice::free()
     OSSafeReleaseNULL(_eventSource);
     OSSafeReleaseNULL(_workLoop);
 
-    if ( _reserved )
+    if (_reserved)
     {
-        IODelete( _reserved, ExpansionData, 1 );
+        IOFreeType(_reserved, ExpansionData);
     }
 
     return super::free();
@@ -654,13 +649,11 @@ bool IOHIDDevice::matchPropertyTable(OSDictionary * table, SInt32 * score)
     }
     // *** END HACK ***
     
-#if TARGET_OS_OSX
     // For vendor defined usage page as part of primary usage or device usages
     // matching should contain vendor id and transport
     if (match && table) {
         match = validateMatchingTable(table);
     }
-#endif //TARGET_OS_OSX
     return match;
 }
 
@@ -742,10 +735,10 @@ bool IOHIDDevice::publishProperties(IOService * provider __unused)
         SET_PROP_FROM_VALUE(    kIOHIDPrimaryUsageKey,      primaryUsage                );
         SET_PROP_FROM_VALUE(    kIOHIDPrimaryUsagePageKey,  primaryUsagePage            );
         SET_PROP_FROM_VALUE(    kIOHIDDeviceUsagePairsKey,  deviceUsagePairs            );
+        SET_PROP_FROM_VALUE(    kIOHIDModelNumberKey,           copyProperty(kIOHIDModelNumberKey));
         SET_PROP_FROM_VALUE(    kIOHIDMaxInputReportSizeKey,    copyProperty(kIOHIDMaxInputReportSizeKey));
         SET_PROP_FROM_VALUE(    kIOHIDMaxOutputReportSizeKey,   copyProperty(kIOHIDMaxOutputReportSizeKey));
         SET_PROP_FROM_VALUE(    kIOHIDMaxFeatureReportSizeKey,  copyProperty(kIOHIDMaxFeatureReportSizeKey));
-        SET_PROP_FROM_VALUE(    kIOHIDRelaySupportKey,          copyProperty(kIOHIDRelaySupportKey, gIOServicePlane));
         SET_PROP_FROM_VALUE(    kIOHIDReportDescriptorKey,      copyProperty(kIOHIDReportDescriptorKey));
         SET_PROP_FROM_VALUE(    kIOHIDProtectedAccessKey,       newIsAccessProtected());
 
@@ -877,7 +870,7 @@ bool IOHIDDevice::handleOpen(IOService      *client,
 {
     bool  		accept = false;
 
-    HIDDeviceLogDebug("open by %s 0x%llx (0x%x)", client->getName(), client->getRegistryEntryID(), (unsigned int)options);
+    IOLog("open by %s 0x%llx (0x%x)\n", client->getName(), client->getRegistryEntryID(), (unsigned int)options);
 
     do {
         if ( _seizedClient)
@@ -905,14 +898,12 @@ bool IOHIDDevice::handleOpen(IOService      *client,
 
             _seizedClient = client;
 
-#if TARGET_OS_OSX
             IOHIKeyboard * keyboard = OSDynamicCast(IOHIKeyboard, getProvider());
             IOHIPointing * pointing = OSDynamicCast(IOHIPointing, getProvider());
             if ( keyboard )
                 keyboard->IOHIKeyboard::message(kIOHIDSystemDeviceSeizeRequestMessage, this, (void *)true);
             else if ( pointing )
                 pointing->IOHIPointing::message(kIOHIDSystemDeviceSeizeRequestMessage, this, (void *)true);
-#endif
         }
         accept = true;
     }
@@ -930,7 +921,7 @@ bool IOHIDDevice::handleOpen(IOService      *client,
 void IOHIDDevice::handleClose(IOService * client, IOOptionBits options __unused)
 {
     // Remove the object from the client OSSet.
-    HIDDeviceLogDebug("close by %s 0x%llx (0x%x)", client->getName(), client->getRegistryEntryID(), (unsigned int)options);
+    IOLog("close by %s 0x%llx (0x%x)\n", client->getName(), client->getRegistryEntryID(), (unsigned int)options);
     
     if ( _clientSet->containsObject(client) )
     {
@@ -941,14 +932,12 @@ void IOHIDDevice::handleClose(IOService * client, IOOptionBits options __unused)
         {
             _seizedClient = 0;
 
-#if TARGET_OS_OSX
             IOHIKeyboard * keyboard = OSDynamicCast(IOHIKeyboard, getProvider());
             IOHIPointing * pointing = OSDynamicCast(IOHIPointing, getProvider());
             if ( keyboard )
                 keyboard->IOHIKeyboard::message(kIOHIDSystemDeviceSeizeRequestMessage, this, (void *)false);
             else if ( pointing )
                 pointing->IOHIPointing::message(kIOHIDSystemDeviceSeizeRequestMessage, this, (void *)false);
-#endif
         }
 
         _performTickle = ShouldPostDisplayActivityTickles(this, _clientSet, _seizedClient);
@@ -1045,8 +1034,6 @@ IOReturn IOHIDDevice::newUserClientInternal( task_t          owningTask,
 
 IOReturn IOHIDDevice::message( UInt32 type, IOService * provider, void * argument )
 {
-    bool providerIsInterface = _interfaceNubs ? (_interfaceNubs->getNextIndexOfObject(provider, 0) != -1) : false;
-
     HIDDeviceLogDebug("message: 0x%x from: 0x%llx %d", (unsigned int)type, (provider ? provider->getRegistryEntryID() : 0), _performWakeTickle);
 
     if ((kIOMessageDeviceSignaledWakeup == type) && _performWakeTickle)
@@ -1054,12 +1041,8 @@ IOReturn IOHIDDevice::message( UInt32 type, IOService * provider, void * argumen
         IOHIDSystemActivityTickle(NX_HARDWARE_TICKLE, this); // not a real event. tickle is not maskable.
         return kIOReturnSuccess;
     }
-    if (kIOHIDMessageRelayServiceInterfaceActive == type && providerIsInterface) {
-        bool msgArg = (argument == kOSBooleanTrue);
-        setProperty(kIOHIDRelayServiceInterfaceActiveKey, msgArg ? kOSBooleanTrue : kOSBooleanFalse);
-        messageClients(type, (void *)(uintptr_t)msgArg);
-        return kIOReturnSuccess;
-    }
+
+
     return super::message(type, provider, argument);
 }
 
@@ -1193,7 +1176,7 @@ IOReturn IOHIDDevice::getReport( IOMemoryDescriptor * report,
         
         IOBufferMemoryDescriptor *bmd = OSDynamicCast(IOBufferMemoryDescriptor, report);
         
-        hid_trace(kHIDTraceGetReport, (uintptr_t)getRegistryEntryID(), (uintptr_t)(options & 0xff), (uintptr_t)report->getLength(), bmd ? (uintptr_t)bmd->getBytesNoCopy() : NULL, (uintptr_t)mach_absolute_time());
+        hid_trace(kHIDTraceGetReport, (uintptr_t)getRegistryEntryID(), (uintptr_t)(options & 0xff), (uintptr_t)report->getLength(), bmd ? (uintptr_t)bmd->getBytesNoCopy() : 0, (uintptr_t)mach_absolute_time());
     }
     
     return kr;
@@ -1210,7 +1193,7 @@ IOReturn IOHIDDevice::setReport( IOMemoryDescriptor * report,
         
         IOBufferMemoryDescriptor *bmd = OSDynamicCast(IOBufferMemoryDescriptor, report);
         
-        hid_trace(kHIDTraceSetReport, (uintptr_t)getRegistryEntryID(), (uintptr_t)(options & 0xff), (uintptr_t)report->getLength(), bmd ? (uintptr_t)bmd->getBytesNoCopy() : NULL, (uintptr_t)mach_absolute_time());
+        hid_trace(kHIDTraceSetReport, (uintptr_t)getRegistryEntryID(), (uintptr_t)(options & 0xff), (uintptr_t)report->getLength(), bmd ? (uintptr_t)bmd->getBytesNoCopy() : 0, (uintptr_t)mach_absolute_time());
     }
     
     return setReport(report, reportType, options, 0, 0);
@@ -1231,7 +1214,7 @@ IOReturn IOHIDDevice::parseReportDescriptor( IOMemoryDescriptor * report,
     reportLength = report->getLength();
     require_action(reportLength, exit, ret = kIOReturnBadArgument);
     
-    reportData = IOMalloc(reportLength);
+    reportData = IOMallocData(reportLength);
     require_action(reportData, exit, ret = kIOReturnNoMemory);
     
     report->readBytes(0, reportData, reportLength);
@@ -1268,7 +1251,7 @@ IOReturn IOHIDDevice::parseReportDescriptor( IOMemoryDescriptor * report,
     
 exit:
     if (reportData && reportLength) {
-        IOFree(reportData, reportLength);
+        IOFreeData(reportData, reportLength);
     }
     
     if (ret != kIOReturnSuccess) {
@@ -1372,7 +1355,6 @@ OSBoolean * IOHIDDevice::newIsAccessProtected()
         const UInt32 usagePage;
         const UInt32 usage;
     };
-
     static const UsagePair ProtectedAccessUsagePairs[] = {
         {kHIDPage_AppleVendor, 0x004B},
         {kHIDPage_AppleVendor, 0x004D}
@@ -1552,7 +1534,8 @@ IOReturn IOHIDDevice::postElementTransaction(const void* elementData, UInt32 dat
             goto fail;
         }
         cookieCount++;
-        dataOffset += headerPtr->length + sizeof(IOHIDElementValueHeader);
+
+        require_noerr_action(os_add3_overflow(dataOffset, headerPtr->length, sizeof(IOHIDElementValueHeader), &dataOffset), fail, HIDDeviceLogError("Overflow iterating cookie data buffer %u %u", dataOffset, headerPtr->length));
     }
     // Data isn't as large as expected, don't overrun, just abort
     if (dataOffset != dataSize) {
@@ -1567,7 +1550,7 @@ IOReturn IOHIDDevice::postElementTransaction(const void* elementData, UInt32 dat
                          fail,
                          HIDDeviceLogError("Overflow calculating cookieSize"));
 
-    cookies = (cookieCount <= kMaxLocalCookieArrayLength) ? cookies : (uint32_t*)IOMalloc(cookieSize);
+    cookies = (cookieCount <= kMaxLocalCookieArrayLength) ? cookies : (uint32_t*)IOMallocData(cookieSize);
 
     if (cookies == NULL) {
         ret = kIOReturnNoMemory;
@@ -1599,7 +1582,7 @@ IOReturn IOHIDDevice::postElementTransaction(const void* elementData, UInt32 dat
 fail:
     WORKLOOP_UNLOCK;
     if (cookies != &cookies_[0]) {
-        IOFree(cookies, cookieSize);
+        IOFreeData(cookies, cookieSize);
     }
 
     return ret;
@@ -2045,7 +2028,7 @@ IOReturn IOHIDDevice::handleReportWithTime(
         if ( !reportData )
             return kIOReturnNoMemory;
     } else {
-        reportData = IOMalloc(reportLength);
+        reportData = IOMallocData(reportLength);
         if ( !reportData )
             return kIOReturnNoMemory;
         report->prepare();
@@ -2057,7 +2040,7 @@ IOReturn IOHIDDevice::handleReportWithTime(
         
         IOBufferMemoryDescriptor *bmd = OSDynamicCast(IOBufferMemoryDescriptor, report);
         
-        hid_trace(kHIDTraceHandleReport, (uintptr_t)getRegistryEntryID(), (uintptr_t)(options & 0xff), (uintptr_t)report->getLength(), bmd ? (uintptr_t)bmd->getBytesNoCopy() : NULL, (uintptr_t)mach_absolute_time());
+        hid_trace(kHIDTraceHandleReport, (uintptr_t)getRegistryEntryID(), (uintptr_t)(options & 0xff), (uintptr_t)report->getLength(), bmd ? (uintptr_t)bmd->getBytesNoCopy() : 0, (uintptr_t)mach_absolute_time());
     }
     
     
@@ -2113,7 +2096,7 @@ IOReturn IOHIDDevice::handleReportWithTime(
 
     if ( !bufferDescriptor && reportData ) {
         // Release the buffer
-        IOFree(reportData, reportLength);
+        IOFreeData(reportData, reportLength);
     }
 
     // RY: If this is a non-system HID device, post a null hid

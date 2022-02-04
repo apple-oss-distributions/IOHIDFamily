@@ -33,11 +33,18 @@
 #import <mach/mach_port.h>
 #import <IOKit/hid/IOHIDLibPrivate.h>
 #import <IOKit/hid/IOHIDPrivateKeys.h>
-#import "IOHIDDebug.h"
 #import "IOHIDDescriptorParser.h"
 #import "IOHIDDescriptorParserPrivate.h"
 #import <IOKit/hidsystem/IOHIDLib.h>
+#import "IOHIDFamilyPrivate.h"
 #import "IOHIDFamilyProbe.h"
+#if __has_include(<Rosetta/Rosetta.h>)
+#  include <Rosetta/Rosetta.h>
+#endif
+
+IOHID_DYN_LINK_DYLIB(/usr/lib, Rosetta)
+IOHID_DYN_LINK_FUNCTION(Rosetta, rosetta_is_current_process_translated, dyn_rosetta_is_current_process_translated, bool, false, (void), ())
+IOHID_DYN_LINK_FUNCTION(Rosetta, rosetta_convert_to_rosetta_absolute_time, dyn_rosetta_convert_to_rosetta_absolute_time, uint64_t, system_time, (uint64_t system_time), (system_time))
 
 #ifndef min
 #define min(a, b) ((a < b) ? a : b)
@@ -334,7 +341,6 @@ exit:
         return kIOReturnSuccess;
     }
     
-#if TARGET_OS_OSX
     uint64_t regID;
     
     IORegistryEntryGetRegistryEntryID(_service, &regID);
@@ -359,7 +365,6 @@ exit:
         HIDLogError("0x%llx: TCC deny IOHIDDeviceOpen", regID);
     }
     require_action(_tccGranted, exit, ret = kIOReturnNotPermitted);
-#endif
     
     ret = IOServiceOpen(_service,
                         mach_task_self(),
@@ -494,6 +499,7 @@ static IOReturn _getProperty(void *iunknown,
             // Force a copy of the string to avoid the key reference from getting courrpted
             NSString * dictKey = [key mutableCopy];
             _properties[dictKey] = (__bridge id)prop;
+            CFRelease(prop);
         }
     }
     
@@ -517,8 +523,10 @@ static IOReturn _setProperty(void *iunknown,
 {
     // Force a copy of the key and property to avoid the client from courrpting the storage.
     // CFPropertyList is used to do a deep copy. Only types that are supported by Property Lists are valid then.
+    kern_return_t ret = kIOReturnSuccess;
     NSString* keyCopy = [key mutableCopy];
     id propertyCopy = property ? (__bridge_transfer id)CFPropertyListCreateDeepCopy(kCFAllocatorDefault, (__bridge CFTypeRef)property, kCFPropertyListMutableContainersAndLeaves) : nil;
+
     if ([key isEqualToString:@(kIOHIDDeviceSuspendKey)]) {
         require(_queue, exit);
         
@@ -527,12 +535,14 @@ static IOReturn _setProperty(void *iunknown,
         } else {
             [_queue start];
         }
+    } else if ([key isEqualToString:@kIOHIDMaxReportBufferCountKey] || [key isEqualToString:@kIOHIDReportBufferEntrySizeKey]) {
+        ret = IOConnectSetCFProperty(_connect, (__bridge CFStringRef)key, (__bridge CFTypeRef)property);
     }
     
 exit:
     _properties[keyCopy] = propertyCopy;
 
-    return kIOReturnSuccess;
+    return ret;
 }
 
 static IOReturn _getAsyncEventSource(void *iunknown, CFTypeRef *pSource)
@@ -762,6 +772,7 @@ static IOReturn _setValue(void *iunknown,
     uint32_t inputSize = 0;
     uint64_t input = 0;
     NSUInteger elementIndex;
+    CFIndex valueLength = 0;
     
     require_action(_opened, exit, ret = kIOReturnNotOpen);
     
@@ -788,7 +799,10 @@ static IOReturn _setValue(void *iunknown,
                    ret = kIOReturnSuccess);
 
     // Send the value to the kernel.
-    inputSize = (uint32_t)(sizeof(IOHIDElementValueHeader) + IOHIDValueGetLength(value));
+    valueLength = IOHIDValueGetLength(value);
+    require_action(valueLength>=0, exit, ret = kIOReturnError);
+
+    inputSize = (uint32_t)(sizeof(IOHIDElementValueHeader) + valueLength);
     inputStruct = malloc(inputSize);
     _IOHIDValueCopyToElementValueHeader(value, inputStruct);
 
@@ -806,7 +820,9 @@ static IOReturn _setValue(void *iunknown,
                               NULL);
     free(inputStruct);
     if (ret) {
-        HIDLogError("kIOHIDLibUserClientPostElementValues:%x",ret);
+        uint64_t regID;
+        IORegistryEntryGetRegistryEntryID(_service, &regID);
+        HIDLogError("kIOHIDLibUserClientPostElementValues(%llx):%x", regID, ret);
     } else {
         [element setValueRef:value];
     }
@@ -914,6 +930,10 @@ static IOReturn _getValue(void *iunknown,
     
     // Update our value after kernel call
     timestamp = *((uint64_t *)&(elementValue->timestamp));
+
+    // Convert to the same time base as element.timestamp
+    timestamp = dyn_rosetta_is_current_process_translated() ?
+        dyn_rosetta_convert_to_rosetta_absolute_time(timestamp) : timestamp;
     
     // Check if we need to update our value
     if (!element.valueRef ||
@@ -960,6 +980,11 @@ static void _valueAvailableCallback(void *context,
         
         if (IOHIDValueGetBytePtr(value) && IOHIDValueGetLength(value)) {
             size = min(_inputReportBufferLength, IOHIDValueGetLength(value));
+            if (size < 0) {
+                CFRelease(value);
+                continue;
+            }
+            
             bcopy(IOHIDValueGetBytePtr(value), _inputReportBuffer, size);
         }
         

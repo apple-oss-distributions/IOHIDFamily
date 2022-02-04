@@ -19,11 +19,14 @@
 	</dict>
 	<key>EnablePressuredExit</key>
 	<true/>
-	<key>_LimitLoadFromVariant</key>
+	<key>_LimitLoadToVariant</key>
 	<string>IsDarwinOS</string>
 	<key>ProgramArguments</key>
 	<array>
 		<string>/usr/libexec/hidd</string>
+		<string>eventSystem</string>
 	</array>
+	<key>RunAtLoad</key>
+	<true/>
 </dict>
 </plist>

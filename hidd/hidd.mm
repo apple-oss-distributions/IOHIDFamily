@@ -23,16 +23,14 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/hid/IOHIDEventSystem.h>
 #include <IOKit/hidsystem/IOHIDParameter.h>
+#include <IOKit/hid/IOHIDLibPrivate.h>
 #include <IOKit/IOKitLib.h>
 #include <mach/mach.h>
 #include <CoreFoundation/CFLogUtilities.h>
-#include "IOHIDDebug.h"
 #include <AssertMacros.h>
-#if TARGET_OS_OSX
+#include <sys/resource.h>
 #import <HIDPreferences/HIDPreferencesHelperListener.h>
-#endif
 
-#if TARGET_OS_OSX
 
 static HIDPreferencesHelperListener *__xpcListener  = nil;
 #pragma mark - setup xpc helper
@@ -49,12 +47,11 @@ static bool setupXPCHelper(void) {
     return true;
     
 }
-#endif
 
 #pragma mark - load parameters
 static void IOHIDEventSystemLoadDefaultParameters (IOHIDEventSystemRef eventSystem) {
   
-    io_service_t service = IORegistryEntryFromPath(kIOMasterPortDefault, kIOServicePlane ":/IOResources/IOHIDSystem" );
+    io_service_t service = IORegistryEntryFromPath(kIOMainPortDefault, kIOServicePlane ":/IOResources/IOHIDSystem" );
     if( !service) {
         return;
     }
@@ -116,9 +113,15 @@ exit:
 
 #pragma mark -
 int main (int argc , const char * argv[]) {
+
+    int ioreturn = setiopolicy_np(IOPOL_TYPE_VFS_ALLOW_LOW_SPACE_WRITES,
+                       IOPOL_SCOPE_PROCESS,
+                       IOPOL_VFS_ALLOW_LOW_SPACE_WRITES_ON);
+
+    if (!ioreturn) {
+        HIDLogError("setiopolicy_np returned error: %#x", ioreturn);
+    }
     
-    
-#if TARGET_OS_OSX
     bool supportEventSystem = false;
     
     if (argc > 1 && strcmp(argv[1], "eventSystem") == 0) {
@@ -148,12 +151,6 @@ int main (int argc , const char * argv[]) {
     }
     
     
-#else
-    
-    if (!initHIDSystem()) {
-        exit(EXIT_FAILURE);
-    }
-#endif
     
     CFRunLoopRun();
     

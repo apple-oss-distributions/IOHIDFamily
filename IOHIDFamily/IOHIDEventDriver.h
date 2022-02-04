@@ -90,6 +90,7 @@ private:
         struct {
             IOHIDElement *      deviceModeElement;
             OSArray *           transducers;
+            OSArray *           transducerStates;
             IOHIDElement *      touchCancelElement;
             bool                native;
             bool                collectionDispatch;
@@ -98,6 +99,7 @@ private:
             IOHIDElement *      relativeScanTime;
             IOHIDElement *      surfaceSwitch;
             IOHIDElement *      reportRate;
+            OSArray *           buttons;
         } digitizer;
         
         struct {
@@ -204,6 +206,10 @@ private:
             IOOptionBits        prevPhaseFlags;
         } phase;
 
+        struct {
+            OSArray * elements;
+        } proximity;
+
         UInt64  lastReportTime;
 
         IOWorkLoop *            workLoop;
@@ -234,6 +240,7 @@ private:
     bool                    parseSensorPropertyElement(IOHIDElement * element);
     bool                    parseDeviceOrientationElement(IOHIDElement * element);
     bool                    parsePhaseElement(IOHIDElement * element);
+    bool                    parseProximityElement(IOHIDElement * element);
 
     void                    processLEDElements();
     void                    processDigitizerElements();
@@ -288,11 +295,13 @@ private:
     void                    handleTemperatureReport(AbsoluteTime timeStamp, UInt32 reportID);
     void                    handleDeviceOrientationReport(AbsoluteTime timeStamp, UInt32 reportID);
     void                    handlePhaseReport(AbsoluteTime timeStamp, UInt32 reportID);
+    void                    handleProximityReport(AbsoluteTime, UInt32 reportID);
 
     bool                    serializeCharacterGestureState(void * ref, OSSerialize * serializer);
     bool                    conformTo (UInt32 usagePage, UInt32 usage);
     IOHIDEvent*             createDigitizerTransducerEventForReport(DigitizerTransducer * transducer, AbsoluteTime timeStamp, UInt32 reportID);
     bool                    serializeDebugState(void * ref, OSSerialize * serializer);
+    UInt32                  getButtonStateFromElements(OSArray * elements);
 
 protected:
 

@@ -33,7 +33,7 @@
 #import <AssertMacros.h>
 #import <Foundation/NSDate.h>
 #import "IOHIDDeviceClass.h"
-#import "IOHIDDebug.h"
+#include <IOKit/hid/IOHIDLibPrivate.h>
 #include <IOKit/hid/IOHIDPrivateKeys.h>
 
 // See HID spec for explanation (6.2.2.7 Global Items)
@@ -116,6 +116,18 @@
     }
     
     UPSLog("properties: %@", _properties);
+}
+
+static void logUpsEventDict(NSDictionary* dict, NSString* s)
+{
+    NSDictionary *dbgDict = dict[@(kIOPSDebugInformationKey)];
+    NSMutableDictionary *logDict = [dict mutableCopy];
+    [logDict removeObjectForKey : @(kIOPSDebugInformationKey)];
+
+    UPSLog("%@: %@", s, logDict);
+    if (dbgDict) {
+        UPSLogDebug("%@: %@", s, dbgDict);
+    }
 }
 
 - (void)parseElements:(NSArray *)elements
@@ -247,6 +259,8 @@
                     case kHIDUsage_AppleVendorBattery_AverageChargingCurrent:
                         if (output) {
                             element.psKey = @(kIOPSCommandSendAverageChargingCurrent);
+                        } else {
+                            element.psKey = @(kIOPSDebugInformation_AppleBatteryCaseAverageChargingCurrent);
                         }
                         break;
                     case kHIDUsage_AppleVendorBattery_IncomingVoltage:
@@ -269,6 +283,58 @@
                         break;
                     case kHIDUsage_AppleVendorBattery_DebugInductiveStatus:
                         element.psKey = @(kIOPSDebugInformation_InductiveStatusKey);
+                        break;
+                    case kHIDUsage_AppleVendorBattery_BmuLifetimeCell0MaxVoltage:
+                        element.psKey = @(kIOPSDebugInformation_AppleBatteryCaseLifetimeCell0MaxVoltage);
+                        element.isConstant = YES;
+                        break;
+                    case kHIDUsage_AppleVendorBattery_BmuLifetimeCell1MaxVoltage:
+                        element.psKey = @(kIOPSDebugInformation_AppleBatteryCaseLifetimeCell1MaxVoltage);
+                        element.isConstant = YES;
+                        break;
+                    case kHIDUsage_AppleVendorBattery_BmuLifetimeCell0MinVoltage:
+                        element.psKey = @(kIOPSDebugInformation_AppleBatteryCaseLifetimeCell0MinVoltage);
+                        element.isConstant = YES;
+                        break;
+                    case kHIDUsage_AppleVendorBattery_BmuLifetimeCell1MinVoltage:
+                        element.psKey = @(kIOPSDebugInformation_AppleBatteryCaseLifetimeCell1MinVoltage);
+                        element.isConstant = YES;
+                        break;
+                    case kHIDUsage_AppleVendorBattery_BmuLifetimeMaxChargeCurrent:
+                        element.psKey = @(kIOPSDebugInformation_AppleBatteryCaseLifetimeMaxChargeCurrent);
+                        element.isConstant = YES;
+                        break;
+                    case kHIDUsage_AppleVendorBattery_BmuLifetimeMaxDischargeCurrent:
+                        element.psKey = @(kIOPSDebugInformation_AppleBatteryCaseLifetimeMaxDischargeCurrent);
+                        element.isConstant = YES;
+                        break;
+                    case kHIDUsage_AppleVendorBattery_BmuLifetimeMaxTemperature:
+                        element.psKey = @(kIOPSDebugInformation_AppleBatteryCaseLifetimeMaxTemperature);
+                        element.isConstant = YES;
+                        break;
+                    case kHIDUsage_AppleVendorBattery_BmuLifetimeMinTemperature:
+                        element.psKey = @(kIOPSDebugInformation_AppleBatteryCaseLifetimeMinTemperature);
+                        element.isConstant = YES;
+                        break;
+                    case kHIDUsage_AppleVendorBattery_BmuLifetimeTotalFWRuntime:
+                        element.psKey = @(kIOPSDebugInformation_AppleBatteryCaseLifetimeTotalFWRuntime);
+                        element.isConstant = YES;
+                        break;
+                    case kHIDUsage_AppleVendorBattery_BmuLifetimeTimeBelowLowTemperature:
+                        element.psKey = @(kIOPSDebugInformation_AppleBatteryCaseLifetimeTimeBelowLowTemperature);
+                        element.isConstant = YES;
+                        break;
+                    case kHIDUsage_AppleVendorBattery_BmuLifetimeTimeAboveLowTemperature:
+                        element.psKey = @(kIOPSDebugInformation_AppleBatteryCaseLifetimeTimeAboveLowTemperature);
+                        element.isConstant = YES;
+                        break;
+                    case kHIDUsage_AppleVendorBattery_BmuLifetimeTimeAboveMidTemperature:
+                        element.psKey = @(kIOPSDebugInformation_AppleBatteryCaseLifetimeTimeAboveMidTemperature);
+                        element.isConstant = YES;
+                        break;
+                    case kHIDUsage_AppleVendorBattery_BmuLifetimeTimeAboveHighTemperature:
+                        element.psKey = @(kIOPSDebugInformation_AppleBatteryCaseLifetimeTimeAboveHighTemperature);
+                        element.isConstant = YES;
                         break;
                 }
                 break;
@@ -310,20 +376,6 @@
         } else {
             [_elements.feature addObject:element];
             
-            /* Constant feature elements are the one which needs to be updated only one time
-             * We should have this option  propogated on hid element . This work is tracked by
-             * rdar://problem/55080850 and following changes need to be revisited
-             */
-            
-            if (element.isConstant && !element.isUpdated) {
-                
-                UPSLog("Feature element (UP : %x, U : %x) has const data, retrieve current value and skip polling",element.usagePage, element.usage);
-                // Retrieve current value for element
-                [self updateElements:@[element]];
-                element.isUpdated = YES;
-                continue;
-            }
-            
             UPSLog("Feature element (UP : %x, U : %x) added for polling", element.usagePage, element.usage);
             
             /*
@@ -339,15 +391,37 @@
                                                    repeats:YES
                                                      block:^(NSTimer *timer __unused)
                 {
+                    // Check if feature reports need updating, if all elements are
+                    // const and updated we can stop the timer.
+                    bool needsUpdate = false;
+                    for (id obj in _elements.feature) {
+                        HIDLibElement *feature = (HIDLibElement*)obj;
+                        if (feature.isConstant) {
+                            needsUpdate = !feature.isUpdated;
+                            if (needsUpdate) {
+                                break;
+                            }
+                        } else {
+                            needsUpdate = true;
+                            break;
+                        }
+                    }
+
+                    if (!needsUpdate) {
+                        [_timer invalidate];
+                        _timer = nil;
+                        return;
+                    }
+
                     // only dispatch an event if the element values were updated.
                     if ([self updateEvent] && _eventCallback) {
-                        UPSLog("timer dispatchEvent: %@", _upsEvent);
-                        
+                        logUpsEventDict(_upsUpdatedEvent, @"timer dispatchEvent");
+
                         (_eventCallback)(_eventTarget,
                                          kIOReturnSuccess,
                                          _eventRefcon,
                                          (void *)&_ups,
-                                         (__bridge CFDictionaryRef)_upsEvent);
+                                         (__bridge CFDictionaryRef)_upsUpdatedEvent);
                     }
                 }];
             }
@@ -427,7 +501,6 @@
         
         // we shouldn't query multiple times if given element is const feature element.
         if (element.isConstant && element.isUpdated) {
-            UPSLog("Feature element UP : %x , U : %x updated, skip device call",element.usagePage, element.usage);
             continue;
         }
         
@@ -458,7 +531,6 @@
         
         // we shouldn't query multiple times if given element is const feature element.
         if (element.isConstant && element.isUpdated) {
-            UPSLog("Feature element UP : %x , U : %x updated, skip device call",element.usagePage, element.usage);
             continue;
         }
         
@@ -466,6 +538,10 @@
         
         if (ret == kIOReturnSuccess && value) {
             element.valueRef = value;
+            element.isUpdated = YES;
+            if (element.isConstant) {
+                UPSLog("Constant feature element UP : %x , U : %x updated", element.usagePage, element.usage);
+            }
         }
     }
     
@@ -479,14 +555,13 @@
     bool isCharging = false;
     bool isDischarging = false; // Keeping this seperate bool for case when both charge / discharge is 1 (possible ??)
     bool isACSource = false;
-    
-    /*
-     * Get the latest element values. Our input elements will already be updated
-     * when we receive our valueAvailableCallback, so we just need to get the
-     * feature elements.
-     */
+    bool isChargingPrev = false;
+    bool isDischargingPrev = false; // Keeping this seperate bool for case when both charge / discharge is 1 (possible ??)
+    bool isACSourcePrev = false;
+    [_upsUpdatedEvent removeAllObjects];
+
     [self updateElements:_elements.feature];
-    
+
     for (HIDLibElement *element in _eventElements) {
         HIDLibElement *latest = [self latestElement:_eventElements
                                               psKey:element.psKey];
@@ -495,10 +570,10 @@
             UPSLog("Skipping duplicate element (UP : %x U : %x Type : %u IV: %ld) with key %@\n",element.usagePage, element.usage, (unsigned int)element.type, (long)element.integerValue, element.psKey);
             continue;
         }
-        
         NSObject *previousValue = _upsEvent[element.psKey];
         NSObject *newValue = nil;
         NSString *elementKey = element.psKey;
+        bool elementChanged = false;
         SInt32 translatedValue = (SInt32)element.integerValue;
         double exponent = element.unitExponent < 8 ? element.unitExponent :
                                                 -(0x10 - element.unitExponent);
@@ -539,10 +614,12 @@
                     case kHIDUsage_BS_Charging:
                         newValue = element.integerValue ? @YES : @NO;
                         isCharging |= (element.integerValue ? 1 : 0);
+                        isChargingPrev = [previousValue isEqual: @YES] ? 1 : 0;
                         break;
                     case kHIDUsage_BS_Discharging:
                         newValue = element.integerValue ? @FALSE : @TRUE;
                         isDischarging |= (element.integerValue ? 1 : 0);
+                        isDischargingPrev = [previousValue isEqual: @TRUE] ? 1 : 0;
                         break;
                     case kHIDUsage_BS_AbsoluteStateOfCharge:
                     case kHIDUsage_BS_RemainingCapacity:
@@ -553,7 +630,7 @@
                         
                         // If units are in %, update time to full and time to
                         // empty elements
-                        if (!element.unit) {
+                        if (!element.unit && ![previousValue isEqual:@(translatedValue)]) {
                             NSArray *elements;
                             HIDLibElement *tmpElement;
                             SInt32 tmpValue;
@@ -568,7 +645,9 @@
                                                     ((double)tmpValue / 100.0));
                                 
                                 // convert seconds to minutes
-                                _upsEvent[@(kIOPSTimeToFullChargeKey)] = @(tmpValue / 60);
+                                if (![tmpElement isEqual: previousValue]) {
+                                    _upsUpdatedEvent[@(kIOPSTimeToFullChargeKey)] = @(tmpValue / 60);
+                                }
                             }
                             
                             elements = [self copyElements:_eventElements
@@ -576,7 +655,7 @@
                             if (elements && elements.count) {
                                 tmpElement = [elements objectAtIndex:0];
                                 // convert seconds to minutes
-                                _upsEvent[@(kIOPSTimeToEmptyKey)] = @(tmpElement.integerValue / 60);
+                                _upsUpdatedEvent[@(kIOPSTimeToEmptyKey)] = @(tmpElement.integerValue / 60);
                             }
                         }
                         break;
@@ -609,6 +688,7 @@
                     case kHIDUsage_BS_ACPresent:
                         newValue = element.integerValue ? @(kIOPSACPowerValue) : @(kIOPSBatteryPowerValue);
                         isACSource |= (element.integerValue ? 1 : 0);
+                        isACSourcePrev = [previousValue isEqual:@(kIOPSACPowerValue)] ? 1 : 0; 
                         break;
                 }
                 break;
@@ -628,6 +708,16 @@
                         if (element.unit == kIOHIDUnitAmp) {
                             translatedValue *= pow(10, exponent);
                         }
+                        break;
+                    case kHIDUsage_AppleVendorBattery_AverageChargingCurrent:
+                        // convert to mA
+                        translatedValue *= 1000;
+                        if (element.unit == kIOHIDUnitAmp) {
+                            translatedValue *= pow(10, exponent);
+                        }
+                        _debugInformation[@(kIOPSDebugInformation_AppleBatteryCaseAverageChargingCurrent)] = @(translatedValue);
+                        newValue = _debugInformation;
+                        elementKey = @(kIOPSDebugInformationKey);
                         break;
                     case kHIDUsage_AppleVendorBattery_ChargingVoltage:
                     case kHIDUsage_AppleVendorBattery_IncomingVoltage:
@@ -658,6 +748,23 @@
                         newValue = _debugInformation;
                         elementKey = @(kIOPSDebugInformationKey);
                         break;
+                    case kHIDUsage_AppleVendorBattery_BmuLifetimeCell0MaxVoltage:
+                    case kHIDUsage_AppleVendorBattery_BmuLifetimeCell1MaxVoltage:
+                    case kHIDUsage_AppleVendorBattery_BmuLifetimeCell0MinVoltage:
+                    case kHIDUsage_AppleVendorBattery_BmuLifetimeCell1MinVoltage:
+                    case kHIDUsage_AppleVendorBattery_BmuLifetimeMaxChargeCurrent:
+                    case kHIDUsage_AppleVendorBattery_BmuLifetimeMaxDischargeCurrent:
+                    case kHIDUsage_AppleVendorBattery_BmuLifetimeMaxTemperature:
+                    case kHIDUsage_AppleVendorBattery_BmuLifetimeMinTemperature:
+                    case kHIDUsage_AppleVendorBattery_BmuLifetimeTotalFWRuntime:
+                    case kHIDUsage_AppleVendorBattery_BmuLifetimeTimeBelowLowTemperature:
+                    case kHIDUsage_AppleVendorBattery_BmuLifetimeTimeAboveLowTemperature:
+                    case kHIDUsage_AppleVendorBattery_BmuLifetimeTimeAboveMidTemperature:
+                    case kHIDUsage_AppleVendorBattery_BmuLifetimeTimeAboveHighTemperature:
+                        _debugInformation[element.psKey] = @(element.integerValue);
+                        newValue = _debugInformation;
+                        elementKey = @(kIOPSDebugInformationKey);
+                        break;
                 }
                 break;
         }
@@ -666,12 +773,15 @@
         if (newValue == nil) {
             newValue = @(translatedValue);
         }
-        
-        updated |= ![newValue isEqual:previousValue];
+
+
+        elementChanged = ![newValue isEqual:previousValue];       
+   
+        updated |= elementChanged;
         
         // if our element has a timestamp then we know its legit
-        if (element.timestamp) {
-            _upsEvent[elementKey] = newValue;
+        if (element.timestamp && elementChanged) {
+            _upsUpdatedEvent[elementKey] = newValue;
         }
     }
     
@@ -688,13 +798,17 @@
     // 4. AC preset usage truely convey power source
     UPSLog("Power Source status isACSource : %s , isCharging : %s , isDischarging : %s", isACSource ? "Yes" : "No", isCharging ? "Yes" : "No", isDischarging ? "Yes" : "No");
     
-    if (isACSource || (isCharging && !isDischarging)) {
-        _upsEvent[@(kIOPSPowerSourceStateKey)] = @(kIOPSACPowerValue);
-    } else {
-        _upsEvent[@(kIOPSPowerSourceStateKey)] = @(kIOPSBatteryPowerValue);
+    if (isACSource != isACSourcePrev || isCharging != isChargingPrev || isDischarging != isDischargingPrev) {
+        if (isACSource || (isCharging && !isDischarging)) {
+            _upsUpdatedEvent[@(kIOPSPowerSourceStateKey)] = @(kIOPSACPowerValue);
+        } else {
+            _upsUpdatedEvent[@(kIOPSPowerSourceStateKey)] = @(kIOPSBatteryPowerValue);
+        }
     }
     
     // When both charging and discharging are reported this should be battery (since AC is not reported in first check)
+
+    [_upsEvent addEntriesFromDictionary:_upsUpdatedEvent];
     
     return updated;
 }
@@ -732,13 +846,13 @@ static void _valueAvailableCallback(void *context,
     
     [self updateEvent];
     if (_eventCallback) {
-        UPSLog("dispatchEvent: %@", _upsEvent);
+        logUpsEventDict(_upsEvent, @"dispatchEvent");
         
         (_eventCallback)(_eventTarget,
                          kIOReturnSuccess,
                          _eventRefcon,
                          (void *)&_ups,
-                         (__bridge CFDictionaryRef)_upsEvent);
+                         (__bridge CFDictionaryRef)_upsUpdatedEvent);
     }
 }
 
@@ -751,7 +865,7 @@ static void _valueAvailableCallback(void *context,
     IOCFPlugInInterface **plugin = NULL;
     SInt32 score = 0;
     HRESULT result = E_NOINTERFACE;
-    
+
     ret = IORegistryEntryCreateCFProperties(service,
                                             &deviceProperties,
                                             kCFAllocatorDefault,
@@ -884,7 +998,7 @@ exit:
     if (deviceProperties) {
         CFRelease(deviceProperties);
     }
-    
+
     return ret;
 }
 
@@ -969,9 +1083,9 @@ static IOReturn _getEvent(void *iunknown, CFDictionaryRef *event)
     
     [self updateEvent];
     *event = (__bridge CFDictionaryRef)_upsEvent;
-    
-    UPSLog("getEvent: %@", _upsEvent);
-    
+
+    logUpsEventDict(_upsEvent, @"getEvent");
+
     return kIOReturnSuccess;
 }
 
@@ -1133,8 +1247,8 @@ static IOReturn _createAsyncEventSource(void *iunknown, CFTypeRef *source)
     _commandElements = [[NSMutableArray alloc] init];
     _eventElements = [[NSMutableArray alloc] init];
     _upsEvent = [[NSMutableDictionary alloc] init];
+    _upsUpdatedEvent = [[NSMutableDictionary alloc] init];
     _debugInformation = [[NSMutableDictionary alloc] init];
-    
     return self;
 }
 
