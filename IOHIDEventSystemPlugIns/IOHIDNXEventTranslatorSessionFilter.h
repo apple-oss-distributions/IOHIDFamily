@@ -90,6 +90,7 @@ private:
     uint64_t                        _previousEventTime;
     uint64_t                        _declareActivityThreshold;
     dispatch_queue_t                _updateActivityQueue;
+    dispatch_queue_t                _modifiersQueue;
   
     CFMutableDictionaryRefWrap      _modifiers;
     CFMutableDictionaryRefWrap      _companions;
@@ -143,6 +144,9 @@ private:
     boolean_t resetStickyKeys(IOHIDEventRef event);
  
     void serialize (CFMutableDictionaryRef dict) const;
+
+    CFStringRef createNXEventActivityString(IOHIDServiceRef sender, NXEventExt * nxEvent);
+    CFStringRef createHIDEventActivityString(IOHIDServiceRef sender, IOHIDEventRef event);
   
 private:
     IOHIDNXEventTranslatorSessionFilter();

@@ -1795,44 +1795,37 @@ exit:
 
 IOHIDEvent *IOHIDEventDriver::copyMatchingEvent(OSDictionary *matching)
 {
-    IOHIDEvent *event = NULL;
-    OSNumber *eventTypeNum = NULL;
-    OSNumber *usagePageNum = NULL;
-    OSNumber *usageNum = NULL;
-    uint32_t eventType = 0;
-    uint32_t usagePage = 0;
-    uint32_t usage = 0;
-    
-    require(matching, exit);
-    
-    eventTypeNum = OSDynamicCast(OSNumber, matching->getObject(kIOHIDEventTypeKey));
-    require(eventTypeNum, exit);
-    eventType = eventTypeNum->unsigned32BitValue();
-    
-    usagePageNum = OSDynamicCast(OSNumber, matching->getObject(kIOHIDUsagePageKey));
-    require(usagePageNum, exit);
-    usagePage = usagePageNum->unsigned32BitValue();
-    
-    usageNum = OSDynamicCast(OSNumber, matching->getObject(kIOHIDUsageKey));
-    require(usageNum, exit);
-    usage = usageNum->unsigned32BitValue();
-    
-    if (eventType == kIOHIDEventTypeKeyboard) {
-        require(_keyboard.elements, exit);
-        
-        for (unsigned int index = 0; index < _keyboard.elements->getCount(); index++) {
-            IOHIDElement *element = OSDynamicCast(IOHIDElement, _keyboard.elements->getObject(index));
-            require(element, exit);
-            
-            if (usagePage != element->getUsagePage() || usage != element->getUsage())
-                continue;
-            
-            event = IOHIDEvent::keyboardEvent(element->getTimeStamp(), usagePage, usage, element->getValue());
-            break;
+    IOHIDEvent *event = nullptr;
+    OSNumber *eventTypeNum = nullptr;
+
+    if (nullptr != matching &&
+        nullptr != (eventTypeNum = OSDynamicCast(OSNumber, matching->getObject(kIOHIDEventTypeKey)))) {
+        uint32_t eventType = eventTypeNum->unsigned32BitValue();
+
+        if (kIOHIDEventTypeKeyboard == eventType) {
+            OSNumber *usagePageNum = OSDynamicCast(OSNumber, matching->getObject(kIOHIDUsagePageKey));
+            OSNumber *usageNum = OSDynamicCast(OSNumber, matching->getObject(kIOHIDUsageKey));
+
+            if (nullptr != usagePageNum && nullptr != usageNum && nullptr != _keyboard.elements) {
+                uint32_t usagePage = usagePageNum->unsigned32BitValue();
+                uint32_t usage = usageNum->unsigned32BitValue();
+
+                for (unsigned int index = 0; index < _keyboard.elements->getCount(); index++) {
+                    IOHIDElement *element = OSDynamicCast(IOHIDElement, _keyboard.elements->getObject(index));
+
+                    if (nullptr == element || usagePage != element->getUsagePage() || usage != element->getUsage())
+                        continue;
+
+                    event = IOHIDEvent::keyboardEvent(element->getTimeStamp(), usagePage, usage, element->getValue());
+                    break;
+                }
+            }
+        } else if (kIOHIDEventTypeOrientation == eventType) {
+            // Note: Documentation for copyEvent doesn't specify whether matching may be null
+            event = this->copyEvent(eventType, nullptr, 0);
         }
     }
-    
-exit:
+
     return event;
 }
 
@@ -2932,7 +2925,7 @@ UInt32 IOHIDEventDriver::checkGameControllerElement(IOHIDElement * element)
             break;
             
         case kHIDPage_Button:
-            require(usage >= 1 && usage <= 10, exit);
+            require(usage >= 1 && usage <= 14, exit);
             
             base = kHIDUsage_Button_1;
             offset = 0;
@@ -3208,7 +3201,18 @@ void IOHIDEventDriver::handleGameControllerReport(AbsoluteTime timeStamp, UInt32
                     case 10:
                         gcIntVal = &_gameController.thumbstick.right;
                         break;
-
+                    case 11:
+                        gcFixedVal = &_gameController.extra.l4;
+                        break;
+                    case 12:
+                        gcFixedVal = &_gameController.extra.r4;
+                        break;
+                    case 13:
+                        gcFixedVal = &_gameController.extra.l5;
+                        break;
+                    case 14:
+                        gcFixedVal = &_gameController.extra.r5;
+                        break;
                 }
                 break;
         }
@@ -3229,7 +3233,7 @@ void IOHIDEventDriver::handleGameControllerReport(AbsoluteTime timeStamp, UInt32
     require_quiet(reportID == _gameController.sendingReportID, exit);
     
     if ( _gameController.extended ) {
-        dispatchExtendedGameControllerEventWithThumbstickButtons(timeStamp, _gameController.dpad.up, _gameController.dpad.down, _gameController.dpad.left, _gameController.dpad.right, _gameController.face.x, _gameController.face.y, _gameController.face.a, _gameController.face.b, _gameController.shoulder.l1, _gameController.shoulder.r1, _gameController.shoulder.l2, _gameController.shoulder.r2, _gameController.joystick.x, _gameController.joystick.y, _gameController.joystick.z, _gameController.joystick.rz, _gameController.thumbstick.left, _gameController.thumbstick.right);
+        dispatchExtendedGameControllerEventWithOptionalButtons(timeStamp, _gameController.dpad.up, _gameController.dpad.down, _gameController.dpad.left, _gameController.dpad.right, _gameController.face.x, _gameController.face.y, _gameController.face.a, _gameController.face.b, _gameController.shoulder.l1, _gameController.shoulder.r1, _gameController.shoulder.l2, _gameController.shoulder.r2, _gameController.joystick.x, _gameController.joystick.y, _gameController.joystick.z, _gameController.joystick.rz, _gameController.thumbstick.left, _gameController.extra.l4, _gameController.extra.r4, _gameController.extra.l5, _gameController.extra.r5, 0);
     } else {
         dispatchStandardGameControllerEvent(timeStamp, _gameController.dpad.up, _gameController.dpad.down, _gameController.dpad.left, _gameController.dpad.right, _gameController.face.x, _gameController.face.y, _gameController.face.a, _gameController.face.b, _gameController.shoulder.l1, _gameController.shoulder.r1);
     }

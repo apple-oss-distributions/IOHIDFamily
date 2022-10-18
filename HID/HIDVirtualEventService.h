@@ -1,9 +1,25 @@
-//
-//  HIDUserDevice.h
-//  HID
-//
-//  Created by ygoryachok on 12/12/18.
-//
+/*
+ * @APPLE_LICENSE_HEADER_START@
+ *
+ * Copyright (c) 2018-2022 Apple Computer, Inc.  All Rights Reserved.
+ *
+ * This file contains Original Code and/or Modifications of Original Code
+ * as defined in and that are subject to the Apple Public Source License
+ * Version 2.0 (the 'License'). You may not use this file except in
+ * compliance with the License. Please obtain a copy of the License at
+ * http://www.opensource.apple.com/apsl/ and read it before using this
+ * file.
+ *
+ * The Original Code and all software distributed under the License are
+ * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+ * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
+ * INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
+ * Please see the License for the specific language governing rights and
+ * limitations under the License.
+ *
+ * @APPLE_LICENSE_HEADER_END@
+ */
 
 #ifndef HIDVirtualEventService_h
 #define HIDVirtualEventService_h
@@ -14,10 +30,10 @@
 NS_ASSUME_NONNULL_BEGIN
 
 /*
- * @typedef HIDVirtualServiceNotificaionType
+ * @typedef HIDVirtualServiceNotificationType
  *
  * @abstract
- * Enumerator of notificaiotn types.
+ * Enumerator of notification types.
  */
 typedef NS_ENUM(NSInteger, HIDVirtualServiceNotificationType) {
     HIDVirtualServiceNotificationTypeEnumerated = 10,
@@ -37,7 +53,7 @@ typedef NS_ENUM(NSInteger, HIDVirtualServiceNotificationType) {
  * @method setProperty
  *
  * @abstract
- * Handle sets a property on the service.
+ * Handle setting a property on the service.
  *
  * @param value
  * The value of the property.
@@ -54,7 +70,7 @@ typedef NS_ENUM(NSInteger, HIDVirtualServiceNotificationType) {
  * @method propertyForKey
  *
  * @abstract
- * Handle obtains a property from the service.
+ * Handle obtaining a property from the service.
  *
  * @param key
  * The property key.
@@ -87,7 +103,7 @@ typedef NS_ENUM(NSInteger, HIDVirtualServiceNotificationType) {
  * dictionary.
  *
  * @param event
- * Event recived by service.
+ * Event received by service.
  *
  * @result
  * Returns a true on success.
@@ -198,7 +214,7 @@ typedef NS_ENUM(NSInteger, HIDVirtualServiceNotificationType) {
  * @param event
  * The event to be dispatch to event  system.
  *
- *@result true if event was sucsefully dispatched.
+ *@result true if event was successfully dispatched.
  */
 - (BOOL) dispatchEvent: (HIDEvent *) event;
 
