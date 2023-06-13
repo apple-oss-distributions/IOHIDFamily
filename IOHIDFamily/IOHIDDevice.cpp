@@ -285,6 +285,8 @@ OSDefineMetaClassAndAbstractStructors( IOHIDDevice, IOService )
 #define _asyncTimer                 _reserved->asyncTimer
 #define _asyncTimeout               _reserved->asyncTimeout
 #define _settingTimeout             _reserved->settingTimeout
+#define _eventReporter              _reserved->eventReporter
+#define _reporterList               _reserved->reporterList
 
 #define WORKLOOP_LOCK   ((IOHIDEventSource *)_eventSource)->lock()
 #define WORKLOOP_UNLOCK ((IOHIDEventSource *)_eventSource)->unlock()
@@ -337,6 +339,8 @@ void IOHIDDevice::free()
     OSSafeReleaseNULL(_hierarchElements);
     OSSafeReleaseNULL(_interfaceElementArrays);
     OSSafeReleaseNULL(_elementContainer);
+    OSSafeReleaseNULL(_eventReporter);
+    OSSafeReleaseNULL(_reporterList);
 
     if ( _clientSet )
     {
@@ -432,6 +436,8 @@ bool IOHIDDevice::start( IOService * provider )
 
     ret = parseReportDescriptor( reportDescriptor );
     require_noerr_action(ret, exit, HIDDeviceLogError("failed to parse report descriptor"));
+    
+    createReporters();
 
     // Enable multiple interfaces if the first top-level collection has usage pair kHIDPage_AppleVendor, kHIDUsage_AppleVendor_MultipleInterfaces
     if (_elementArray->getCount() > 1 &&
@@ -549,6 +555,78 @@ exit:
         reportDescriptorMap->release();
 
     return result;
+}
+
+void IOHIDDevice::createReporters()
+{
+    bool res = false;
+    IOReportLegend *legend = NULL;
+
+    legend = IOReportLegend::with(NULL);
+    require(legend, exit);
+    
+    _eventReporter = IOSimpleReporter::with(this, kIOReportCategoryPower, kIOReportUnitNone);
+    require_action(_eventReporter, exit, HIDDeviceLogError("IOSimpleReporter::with failed"));
+     
+    _reporterList = OSSet::withCapacity(1);
+    require_action(_reporterList, exit, HIDDeviceLogError("_reporterList creation failed"));
+ 
+    //set up channels for IOSimpleReporter
+    _elementContainer->getInputReportElements()->iterateObjects(^bool(OSObject *object) {
+        IOHIDElementPrivate * element = (IOHIDElementPrivate *) object;
+        if(element) {
+            char buf[12];
+            snprintf(buf, sizeof(buf), "Report %d", (unsigned int)element->getReportID());
+            _eventReporter->addChannel((uint64_t)element->getReportID(), buf);
+        }
+        return false;
+    });
+
+    res = legend->addReporterLegend(_eventReporter, "IOHIDDevice Input Report Errors", "Input Report IDs");
+    require_noerr(res, exit);
+   
+    _reporterList->setObject(_eventReporter);
+    
+    res = true;
+    
+exit:
+    
+    if(!res) {
+        HIDDeviceLogError("IOHIDDevice::createReporters failed");
+    }
+    
+    if (legend) {
+        setProperty(kIOReportLegendKey, legend->getLegend());
+        setProperty(kIOReportLegendPublicKey, true);
+    }
+    
+    OSSafeReleaseNULL(legend);
+}
+
+
+IOReturn IOHIDDevice::configureReport(IOReportChannelList      *channels,
+                          IOReportConfigureAction  action,
+                          void                     *result,
+                          void                     *destination)
+{
+    IOReturn res = kIOReturnError;
+        
+    res = IOReporter::configureAllReports(_reporterList, channels, action, result, destination);
+        
+    return res;
+}
+
+
+IOReturn IOHIDDevice::updateReport(IOReportChannelList     *channels,
+                                        IOReportUpdateAction    action,
+                                        void                    *result,
+                                        void                    *destination)
+{
+    IOReturn res = kIOReturnError;
+        
+    res = IOReporter::updateAllReports(_reporterList, channels, action, result, destination);
+        
+    return res;
 }
 
 bool IOHIDDevice::_publishDeviceNotificationHandler(void * target __unused,
@@ -1585,32 +1663,37 @@ IOReturn IOHIDDevice::postElementTransaction(const void* elementData, UInt32 dat
 {
     IOReturn ret = kIOReturnError;
     uint32_t   cookies_[kMaxLocalCookieArrayLength];
+    uint32_t   dataLengths_[kMaxLocalCookieArrayLength];
+    uint32_t   *dataLengths = dataLengths_;
     uint32_t   *cookies = cookies_;
     uint32_t   cookieCount = 0;
     uint32_t   cookieSize = 0;
     uint32_t   dataOffset = 0;
+    size_t     index = 0;
     uint8_t    *data = (uint8_t*)elementData;
     IOMemoryDescriptor *elementDesc = getMemoryWithCurrentElementValues();
     require(_elementArray && elementDesc, fail);
 
     WORKLOOP_LOCK;
 
-    // Find the number of cookies in the data. Check that all cookies are valid elements.
+    // Find the number of cookies in the data. The data from elementData is shared with user space and may change at any time.
     while (dataOffset < dataSize) {
-        const IOHIDElementValueHeader *headerPtr = (const IOHIDElementValueHeader *)(data + dataOffset);
+        volatile IOHIDElementValueHeader *headerPtr = (volatile IOHIDElementValueHeader *)(data + dataOffset);
+        uint32_t dataLength = headerPtr->length;
         IOHIDElementPrivate *element = GetElement(headerPtr->cookie);
         if (!element) {
             HIDDeviceLogError("Could not find element for cookie: %d", headerPtr->cookie);
             ret = kIOReturnAborted;
             goto fail;
         }
-        cookieCount++;
 
-        require_noerr_action(os_add3_overflow(dataOffset, headerPtr->length, sizeof(IOHIDElementValueHeader), &dataOffset), fail, HIDDeviceLogError("Overflow iterating cookie data buffer %u %u", dataOffset, headerPtr->length));
+        require_noerr_action(os_add3_overflow(dataOffset, dataLength, sizeof(IOHIDElementValueHeader), &dataOffset), fail, HIDDeviceLogError("Overflow iterating cookie data buffer %u %u", dataOffset, dataLength));
+        cookieCount++;
     }
+
     // Data isn't as large as expected, don't overrun, just abort
     if (dataOffset != dataSize) {
-        HIDDeviceLogError("Cookie data buffer is smaller than expected. %u vs. %u",
+        HIDDeviceLogError("Cookie data buffer is smaller than expected. %u expected %u",
                           (unsigned int)dataSize, (unsigned int)dataOffset);
         ret = kIOReturnAborted;
         goto fail;
@@ -1622,38 +1705,83 @@ IOReturn IOHIDDevice::postElementTransaction(const void* elementData, UInt32 dat
                          HIDDeviceLogError("Overflow calculating cookieSize"));
 
     cookies = (cookieCount <= kMaxLocalCookieArrayLength) ? cookies : (uint32_t*)IOMallocData(cookieSize);
+    dataLengths = (cookieCount <= kMaxLocalCookieArrayLength) ? dataLengths : (uint32_t*)IOMallocData(cookieSize);
 
-    if (cookies == NULL) {
+    if (cookies == NULL || dataLengths == NULL) {
         ret = kIOReturnNoMemory;
         goto fail;
     }
 
+    // Validate the data sizes.
+    for (index = 0; index < cookieCount; ++index) {
+        volatile IOHIDElementValueHeader *headerPtr;
+        IOHIDElementPrivate *element;
+
+        uint32_t dataLength;
+        uint32_t cookie;
+
+        headerPtr = (volatile IOHIDElementValueHeader *)(data + dataOffset);
+        cookie = headerPtr->cookie;
+        dataLength = headerPtr->length;
+
+        require_noerr_action(os_add3_overflow(dataOffset, dataLength, sizeof(IOHIDElementValueHeader), &dataOffset), fail, HIDDeviceLogError("Overflow verifying cookie data buffer %u %u", dataOffset, dataLength));
+
+        element = GetElement(cookie);
+
+        if (!element) {
+            HIDDeviceLogError("Could not find element for cookie during validation: %d", cookie);
+            break;
+        }
+
+        if (dataOffset > dataSize) {
+            break;
+        }
+
+        cookies[index] = cookie;
+        dataLengths[index] = dataLength;
+    }
+
+    if (index != cookieCount) {
+        HIDDeviceLogError("Failed to validate all the cookies and data. Expected count changed, validated %zu of %u cookies", index, cookieCount);
+        goto fail;
+    } else if (dataOffset != dataSize) {
+        HIDDeviceLogError("Cookie data buffer is smaller than expected after revalidation. %u expected %u",
+                          (unsigned int)dataSize, (unsigned int)dataOffset);
+        goto fail;
+    }
+
+    dataOffset = 0;
+
     // Update the elements, this replaced the shared kernel-user shared memory.
-    for (size_t index = 0; dataOffset < dataSize; ++index) {
-        const IOHIDElementValueHeader *headerPtr;
+    for (index = 0; index < cookieCount; ++index) {
+        void *elementValuePtr;
         IOHIDElementPrivate *element;
         OSData *elementVal;
 
-        headerPtr = (const IOHIDElementValueHeader *)(data + dataOffset);
-        element = GetElement(headerPtr->cookie);
-        dataOffset += headerPtr->length + sizeof(IOHIDElementValueHeader);
+        elementValuePtr = (void*)((const IOHIDElementValueHeader *)(data + dataOffset))->value;
+        element = GetElement(cookies[index]);
+        dataOffset += dataLengths[index] + sizeof(IOHIDElementValueHeader);
 
-        elementVal = OSData::withBytesNoCopy((void*)headerPtr->value,
-                                             headerPtr->length);
+        elementVal = OSData::withBytesNoCopy(elementValuePtr,
+                                             dataLengths[index]);
         require_action(elementVal, fail, ret = kIOReturnNoMemory);
         element->setDataBits(elementVal);
         elementVal->release();
-
-        cookies[index] = headerPtr->cookie;
     }
 
     // Actually post elements
     ret = postElementValues((IOHIDElementCookie *)cookies, (UInt32)cookieCount, 0, completionTimeout, completion);
+    if (ret != kIOReturnSuccess) {
+        HIDDeviceLogError("postElementValues:%#x", ret);
+    }
 
 fail:
     WORKLOOP_UNLOCK;
     if (cookies != &cookies_[0]) {
         IOFreeData(cookies, cookieSize);
+    }
+    if (dataLengths != &dataLengths_[0]) {
+        IOFreeData(dataLengths, cookieSize);
     }
 
     return ret;
@@ -2021,14 +2149,20 @@ IOReturn IOHIDDevice::handleReportWithTime(
         // XXX - Do we need to advance the start of the report data?
 
         reportID = ( _reportCount > 1 ) ? *((UInt8 *) reportData) : 0;
-
+        
+        IOReturn error = kIOReturnSuccess;
         changed = _elementContainer->processReport(reportType,
                                                    reportID,
                                                    reportData,
                                                    (UInt32)reportLength,
                                                    timeStamp,
                                                    &shouldTickle,
-                                                   options);
+                                                   options,
+                                                   &error);
+        
+        if((_eventReporter) && (error == kIOReturnError)) {
+            _eventReporter->incrementValue(reportID, 1);
+        }
         
         ret = kIOReturnSuccess;
     }
