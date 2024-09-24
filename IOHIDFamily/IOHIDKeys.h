@@ -490,6 +490,22 @@ typedef uint8_t IOHIDAccelerationAlgorithmType;
  */
 #define kIOHIDPointerAccelerationMinimumKey  "HIDPointerAccelerationMinimum"
 
+/*!
+ * @define kIOHIDPrimaryTrackpadCanBeDisabledKey
+ * @abstract
+ * Data property that determines whether primary trackpad can be disabled.
+ */
+#define kIOHIDPrimaryTrackpadCanBeDisabledKey "PrimaryTrackpadCanBeDisabled"
+
+/*!
+     @defined    kIOHIDKeyboardFunctionKeyCountKey
+     @abstract   Property which provides the number of available function keys
+     @discussion For keyboards with a function key row, the number of available function keys will likely need to be 
+                    published within the system for consumers to enable functionality that is  dependent on the
+                    number of available keys.
+ */
+#define kIOHIDKeyboardFunctionKeyCountKey "HIDKeyboardFunctionKeyCount"
+
 __END_DECLS
 
 #endif /* !_IOKIT_HID_IOHIDKEYS_H_ */

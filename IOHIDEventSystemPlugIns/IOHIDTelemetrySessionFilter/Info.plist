@@ -19,18 +19,6 @@
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>NSPrincipalClass</key>
-    <string>HIDStaccatoTestButtonServiceFilter</string>
-    <key>Matching</key>
-    <dict>
-        <key>DeviceUsagePairs</key>
-        <array>
-            <dict>
-                <key>DeviceUsage</key>
-                <integer>1</integer>
-                <key>DeviceUsagePage</key>
-                <integer>11</integer>
-            </dict>
-        </array>
-    </dict>
+    <string>IOHIDTelemetrySessionFilter</string>
 </dict>
 </plist>

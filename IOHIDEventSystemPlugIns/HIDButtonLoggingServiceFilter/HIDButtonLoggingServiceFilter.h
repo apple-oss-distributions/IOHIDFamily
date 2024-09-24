@@ -13,11 +13,17 @@
 
 #import <HID/HID_Private.h>
 
-os_log_t _IOHIDTestButtonLog(void);
+os_log_t _IOHIDButtonLog(void);
 
 NS_ASSUME_NONNULL_BEGIN
 
-@interface HIDStaccatoTestButtonServiceFilter : NSObject <HIDServiceFilter>
+typedef NS_ENUM(NSInteger, HIDSuppressionStateType) {
+    kHIDSuppressionStateTypeUnknown = 0,
+    kHIDSuppressionStateTypeSuppressed = 1,
+    kHIDSuppressionStateTypeUnsuppressed = 2,
+};
+
+@interface HIDButtonLoggingServiceFilter: NSObject <HIDServiceFilter>
 
 - (nullable instancetype)initWithService:(HIDEventService *)service;
 

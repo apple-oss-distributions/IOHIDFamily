@@ -18,7 +18,19 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>Matching</key>
+	<dict>
+		<key>DeviceUsagePairs</key>
+		<array>
+			<dict>
+				<key>DeviceUsage</key>
+				<integer>1</integer>
+				<key>DeviceUsagePage</key>
+				<integer>11</integer>
+			</dict>
+		</array>
+	</dict>
 	<key>NSPrincipalClass</key>
-	<string>IOHIDTestSessionFilter</string>
+	<string>HIDButtonLoggingServiceFilter</string>
 </dict>
 </plist>

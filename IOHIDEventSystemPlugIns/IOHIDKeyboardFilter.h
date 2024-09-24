@@ -224,7 +224,18 @@ private:
     IOHIDEventRef processCapsLockDelay(IOHIDEventRef event);
     void dispatchCapsLock(void);
     void resetCapsLockDelay(void);
-
+    
+    /*!
+     * @function allowKeyRemapping
+     * @abstract Checks the attempted remapping for restricted characters and if the process can bypass those restrictions
+     *
+     * @param   property    the property containing the remapping being set
+     * @param   client         object representing client which is attempting to remap
+     * @result  True if remapping should succeed, false if insufficient permissions should cause remapping failure
+     *
+     */
+    bool allowRemapping(CFTypeRef property, CFTypeRef client);
+    bool hasTCCPermissions(IOHIDEventSystemConnectionRef client);
 
     KeyMap createMapFromArrayOfPairs(CFArrayRef mappings);
     KeyMap createMapFromStringMap(CFStringRef mappings);
