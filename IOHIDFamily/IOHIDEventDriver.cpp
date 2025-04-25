@@ -324,7 +324,6 @@ void IOHIDEventDriver::free ()
     OSSafeReleaseNULL(_digitizer.relativeScanTime);
     OSSafeReleaseNULL(_digitizer.surfaceSwitch);
     OSSafeReleaseNULL(_digitizer.reportRate);
-    OSSafeReleaseNULL(_digitizer.height);
     OSSafeReleaseNULL(_scroll.elements);
     OSSafeReleaseNULL(_led.elements);
     OSSafeReleaseNULL(_keyboard.elements);
@@ -1935,12 +1934,6 @@ bool IOHIDEventDriver::parseDigitizerElement(IOHIDElement * element)
             uint32_t reportInterval = 1000000/reportRate; // us
             setProperty(kIOHIDReportIntervalKey, reportInterval, 32);
         }
-    }
-    
-    if (element->getUsagePage() == kHIDPage_Digitizer && element->getUsage() == kHIDUsage_Dig_Height) {
-        OSSafeReleaseNULL(_digitizer.height);
-        element->retain();
-        _digitizer.height = element;
     }
     
     switch ( parent->getUsage() ) {
@@ -3784,13 +3777,19 @@ IOHIDEvent* IOHIDEventDriver::createDigitizerTransducerEventForReport(DigitizerT
     bool                    hasTransducerID = false;
     UInt32                  transducerIndex = _digitizer.transducers->getNextIndexOfObject(transducer, 0);
     IOFixed                 X               = 0;
+    IOFixed                 xPhysicalMax    = 0;
+    IOFixed                 xLogicalMax     = 0;
     IOFixed                 Y               = 0;
+    IOFixed                 yPhysicalMax    = 0;
+    IOFixed                 yLogicalMax     = 0;
     IOFixed                 Z               = 0;
     IOFixed                 tipPressure     = 0;
     IOFixed                 barrelPressure  = 0;
     IOFixed                 twist           = 0;
     IOFixed                 width           = 0;
     IOFixed                 height          = 0;
+    IOFixed                 heightPhysicalMax = 0;
+    IOFixed                 heightLogicalMax = 0;
     IOFixed                 signalSum       = 0;
     bool                    inRange         = true;
     bool                    hasInRangeUsage = false;
@@ -3809,9 +3808,23 @@ IOHIDEvent* IOHIDEventDriver::createDigitizerTransducerEventForReport(DigitizerT
     OSData                * unfilteredXValue = NULL;
     IOHIDEvent            * unfilteredYEvent = NULL;
     OSData                * unfilteredYValue = NULL;
+    bool                    inDigitizerCollection = false;
   
     require_quiet(transducer->elements, exit);
   
+    for (index = 0; index < transducer->elements->getCount(); index++) {
+        IOHIDElement *  element;
+        
+        element = OSDynamicCast(IOHIDElement, transducer->elements->getObject(index));
+        if ( !element )
+            continue;
+        
+        if (element->getReportID()==reportID) {
+            inDigitizerCollection = true;
+        }
+    }
+    
+    require_action(inDigitizerCollection, exit, HIDServiceLog("createDigitizerTransducerEventForReport generates null event: dispatched input report not present in digitizer collection"));
     
     for (index = 0; index < transducer->elements->getCount(); index++) {
         IOHIDElement *  element;
@@ -3837,10 +3850,14 @@ IOHIDEvent* IOHIDEventDriver::createDigitizerTransducerEventForReport(DigitizerT
                 switch ( usage ) {
                     case kHIDUsage_GD_X:
                         X = element->getScaledFixedValue(kIOHIDValueScaleTypeCalibrated);
+                        xPhysicalMax = CAST_INTEGER_TO_FIXED(element->getPhysicalMax());
+                        xLogicalMax = CAST_INTEGER_TO_FIXED(element->getLogicalMax());
                         handled    |= elementIsCurrent;
                         break;
                     case kHIDUsage_GD_Y:
                         Y = element->getScaledFixedValue(kIOHIDValueScaleTypeCalibrated);
+                        yPhysicalMax = CAST_INTEGER_TO_FIXED(element->getPhysicalMax());
+                        yLogicalMax = CAST_INTEGER_TO_FIXED(element->getLogicalMax());
                         handled    |= elementIsCurrent;
                         break;
                     case kHIDUsage_GD_Z:
@@ -3929,6 +3946,8 @@ IOHIDEvent* IOHIDEventDriver::createDigitizerTransducerEventForReport(DigitizerT
                         break;
                     case kHIDUsage_Dig_Height:
                         height = element->getScaledFixedValue(kIOHIDValueScaleTypePhysical);
+                        heightPhysicalMax = CAST_INTEGER_TO_FIXED(element->getPhysicalMax());
+                        heightLogicalMax = CAST_INTEGER_TO_FIXED(element->getLogicalMax());
                         orientationType = kIOHIDDigitizerOrientationTypeQuality;
                         handled |= elementIsCurrent;
                         break;
@@ -4043,13 +4062,13 @@ IOHIDEvent* IOHIDEventDriver::createDigitizerTransducerEventForReport(DigitizerT
         OSSafeReleaseNULL(event);
     } else {
         // Set remaining event fields
-        if(orientationType == kIOHIDDigitizerOrientationTypeQuality) {
+        if(orientationType == kIOHIDDigitizerOrientationTypeQuality && xPhysicalMax && yPhysicalMax && xLogicalMax && yLogicalMax && heightPhysicalMax && heightLogicalMax) {
             //Divide by 2 to convert to radius; perform normalization to height of the display
-            IOFixed heightPhysicalMax = CAST_INTEGER_TO_FIXED(_digitizer.height->getPhysicalMax());
-            IOFixed heightLogicalMax = CAST_INTEGER_TO_FIXED(_digitizer.height->getLogicalMax());
-            IOFixed accuracy = IOFixedDivide(CAST_INTEGER_TO_FIXED(1), heightLogicalMax);
-            IOFixed minorRadius = IOFixedDivide(IOFixedDivide(width, CAST_INTEGER_TO_FIXED(2)), heightPhysicalMax);
-            IOFixed majorRadius = IOFixedDivide(IOFixedDivide(height, CAST_INTEGER_TO_FIXED(2)), heightPhysicalMax);
+            IOFixed digitizerHeightPhysicalMax = xPhysicalMax > yPhysicalMax ? xPhysicalMax : yPhysicalMax;
+            IOFixed digitizerHeightLogicalMax = xPhysicalMax > yPhysicalMax ? xLogicalMax : yLogicalMax;
+            IOFixed accuracy = IOFixedDivide(IOFixedDivide(heightPhysicalMax, heightLogicalMax), digitizerHeightLogicalMax);
+            IOFixed minorRadius = IOFixedDivide(IOFixedDivide(width, CAST_INTEGER_TO_FIXED(2)), digitizerHeightPhysicalMax);
+            IOFixed majorRadius = IOFixedDivide(IOFixedDivide(height, CAST_INTEGER_TO_FIXED(2)), digitizerHeightPhysicalMax);
             event->setFixedValue(kIOHIDEventFieldDigitizerMajorRadius, majorRadius);
             event->setFixedValue(kIOHIDEventFieldDigitizerMinorRadius, minorRadius);
             event->setFixedValue(kIOHIDEventFieldDigitizerQualityRadiiAccuracy, accuracy);
