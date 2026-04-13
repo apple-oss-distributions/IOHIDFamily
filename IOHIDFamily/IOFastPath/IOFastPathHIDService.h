@@ -91,57 +91,22 @@ protected:
     ///
     IOReturn doTimeSyncForLocalTimeGated(UInt64 timestamp, OSData ** outTime);
 
-    /// Perform time sync for a HID event. This should only be called from a gated context.
-    ///
-    /// This method must be called with the workloop gate held, and asserts if this condition is not
-    /// met.
+    /// Checks a HID event for a child event containing a time-sync'ed timestamp and, if present, returns its value.
     ///
     /// @param  event
-    ///     Event to perform time sync for.
-    ///
-    /// @param[out] outSyncedTime
-    ///     Storage for synced time (mach absolute time).
+    ///     HID event.
     ///
     /// @return
-    ///     - `kIOReturnSuccess` on success
-    ///     - `kIOReturnNotReady` if the time sync service has not been published
-    ///     - `kIOReturnOffline` if the driver or time sync service has terminated
-    ///     - `kIOReturnUnsupported` if `event` does not have a time-sync vendor-defined child event
-    ///     - Other return codes are propagated from the underlying time sync service.
+    ///     Mach absolute timestamp associated with the event, or 0 if there is none.
     ///
-    IOReturn doTimeSyncForHIDEventGated(IOHIDEvent * event, UInt64 * outSyncedTime);
+    UInt64 getSyncedTimestampForHIDEvent(IOHIDEvent * event);
 
 private:
 
     void cleanupHelper();
 
-    bool supportsTimeSync() const;
-    bool sharesHIDDeviceWith(IOHIDTimeSyncService * service) const;
-
-    void setupTimeSync();
-    void timeSyncServiceMatchHandler(thread_call_param_t param);
-    
     OSPtr<IOHIDEventService> _service;
     OSPtr<OSData> _sample;
-
-    thread_call_t _serviceMatchThread;
-    OSPtr<IOHIDTimeSyncService> _timeSync;
-    OSPtr<IONotifier> _notifier;
-
-    /// State flags used to ensure thread safety of the driver.
-    ///
-    enum State {
-        kStateTimeSyncMatched = 1 << 0, ///< a matching time-sync service has been registered.
-        kStateTimeSyncOpened  = 1 << 1, ///< the driver has become a client of the time-sync service.
-        kStateTimeSyncActive  = 1 << 2, ///< time sync is active
-    };
-
-    os_atomic(UInt32) _state; ///< current driver state
-
-    UInt64 tsNotOpenCnt; ///< number of calls to time-sync methods before the time-sync driver is opened
-    UInt64 tsNotActiveCnt; ///< number of calls to time-sync methods before the time-sync became active
-    UInt64 tsToLocalCnt; ///< number of successful calls to sync remote timestamp to local
-    UInt64 tsToRemoteCnt; ///< number of successful calls to sync local timestamp to remote
 };
 
 
@@ -190,8 +155,6 @@ private:
         double y;
         double z;
     };
-
-    void parseSampleFromHIDEvent(IOHIDEvent * event, QueueEntry * sample);
 
     UInt64 generation; ///< counter used to generate sample IDs
 };
@@ -243,10 +206,52 @@ private:
         double z;
     };
 
-    void parseSampleFromHIDEvent(IOHIDEvent * event, QueueEntry * sample);
-
     UInt64 generation; ///< counter used to generate sample IDs
 };
+
+#if APPLE_FEATURE_P192
+
+/// IOFastPath service which generates button samples.
+///
+class IOFastPathHIDButtonService : public IOFastPathHIDService
+{
+    OSDeclareDefaultStructors(IOFastPathHIDButtonService);
+    using super = IOFastPathHIDService;
+
+public:
+
+    /// Start the service. See IOKit/IOService.h for more info.
+    virtual bool start(IOService * provider) override;
+
+protected:
+
+    virtual bool isProducer() const override { return true; }
+
+    /// Create the service's fast path descriptor.
+    ///
+    virtual OSPtr<IOFastPathDescriptor> createDescriptor() override;
+
+    /// Handle a HID event dispatched by the event service. If the event is a button event, enqueue
+    /// a sample with the event data.
+    ///
+    virtual void handleEvent(IOHIDEventService * sender, void * context, IOHIDEvent * event, IOOptionBits options) override;
+
+private:
+
+    struct __attribute__((packed)) QueueEntry {
+        UInt64 timestamp;
+        UInt64 number;
+        UInt64 state;
+        double pressure;
+        double force;
+    };
+
+    void parseSampleFromHIDEvent(IOHIDEvent * event, QueueEntry * sample);
+    void handleButtonEvent(IOHIDEvent * event);
+    double getButtonForce(IOHIDEvent * event) const;
+};
+
+#endif
 
 
 /// IOFastPath service which controls HID device LEDs.

@@ -40,6 +40,7 @@
 #import "IOHIDFamilyPrivate.h"
 #import "IOHIDFamilyProbe.h"
 #import <IOKit/hid/IOHIDAnalytics.h>
+#import <IOKit/hid/IOHIDServiceKeys.h>
 #import <sys/types.h>
 #import <sys/sysctl.h>
 #import <sys/proc_info.h>
@@ -110,6 +111,9 @@ static NSString *SetPropsPassthrough[] = {
  *  
  *  uint8_t                                 *_inputReportBuffer;
  *  CFIndex                                 _inputReportBufferLength;
+
+ *  Lifetime: Object, created in first call of set or get report with callback, released in dealloc. Mutating or reading/writing elements requires the _callbackLock.
+ *  NSMutableSet                            *_pendingCallbacks;
  */
 
 @synthesize port = _port;
@@ -194,11 +198,11 @@ static NSString *SetPropsPassthrough[] = {
     uint32_t maxCookie = 0;
 
     os_unfair_recursive_lock_lock(&_deviceLock);
-    require_action_quiet(!_elements, exit, os_unfair_recursive_lock_unlock(&_deviceLock); ret = kIOReturnSuccess);
+    __Require_Action_Quiet(!_elements, exit, os_unfair_recursive_lock_unlock(&_deviceLock); ret = kIOReturnSuccess);
     os_unfair_recursive_lock_unlock(&_deviceLock);
     
     ret = [self initConnect];
-    require_noerr(ret, exit);
+    __Require_noErr(ret, exit);
     
     ret = IOConnectCallScalarMethod(_connect,
                                     kIOHIDLibUserClientGetElementCount,
@@ -206,7 +210,7 @@ static NSString *SetPropsPassthrough[] = {
                                     0,
                                     output,
                                     &outputCount);
-    require_noerr_action(ret, exit, HIDLogError("IOConnectCallScalarMethod(kIOHIDLibUserClientGetElementCount):%x", ret));
+    __Require_noErr_Action(ret, exit, HIDLogError("IOConnectCallScalarMethod(kIOHIDLibUserClientGetElementCount):%x", ret));
     
     elementCount = (uint32_t)output[0];
     reportCount = (uint32_t)output[1];
@@ -223,7 +227,7 @@ static NSString *SetPropsPassthrough[] = {
                               0,
                               [data mutableBytes],
                               &bufferSize);
-    require_noerr_action(ret, exit, HIDLogError("IOConnectCallMethod(kIOHIDLibUserClientGetElements):%x", ret));
+    __Require_noErr_Action(ret, exit, HIDLogError("IOConnectCallMethod(kIOHIDLibUserClientGetElements):%x", ret));
     
     os_unfair_recursive_lock_lock(&_deviceLock);
     _elements = [[NSMutableArray alloc] init];
@@ -363,21 +367,21 @@ static void _portCallback(CFMachPortRef port,
 
     os_unfair_recursive_lock_lock(&_deviceLock);
     
-    require_quiet(!_port, exit);
+    __Require_Quiet(!_port, exit);
     
     _port = IODataQueueAllocateNotificationPort();
-    require(_port, exit);
+    __Require(_port, exit);
     
     _machPort = CFMachPortCreateWithPort(kCFAllocatorDefault,
                                          _port,
                                          (CFMachPortCallBack)_portCallback,
                                          &context, NULL);
-    require(_machPort, exit);
+    __Require(_machPort, exit);
     
     _runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault,
                                                    _machPort,
                                                    0);
-    require(_runLoopSource, exit);
+    __Require(_runLoopSource, exit);
 exit:
     os_unfair_recursive_lock_unlock(&_deviceLock);
     return;
@@ -392,15 +396,15 @@ exit:
 - (void)initQueue
 {   
     os_unfair_recursive_lock_lock(&_deviceLock);
-    require_quiet(!_queue, exit);
+    __Require_Quiet(!_queue, exit);
 
     [self initPort];
     
-    require_noerr([self initElements], exit);
+    __Require_noErr([self initElements], exit);
     _queue = [[IOHIDQueueClass alloc] initWithDevice:self
                                                 port:_port
                                               source:_runLoopSource];
-    require_action(_queue, exit, HIDLogError("Failed to create queue"));
+    __Require_Action(_queue, exit, HIDLogError("Failed to create queue"));
     
     [_queue setValueAvailableCallback:_valueAvailableCallback
                               context:(__bridge void *)self];
@@ -525,7 +529,7 @@ exit:
     if (!_tccGranted) {
         HIDLogError("0x%llx: TCC deny IOHIDDeviceOpen", regID);
     }
-    require_action(_tccGranted, exit, {
+    __Require_Action(_tccGranted, exit, {
         ret = kIOReturnNotPermitted;
         os_unfair_recursive_lock_unlock(&_deviceLock);
     });
@@ -535,7 +539,7 @@ exit:
                         mach_task_self(),
                         kIOHIDLibUserClientConnectManager,
                         &connection);
-    require_action(ret == kIOReturnSuccess && connection, exit,
+    __Require_Action(ret == kIOReturnSuccess && connection, exit,
                    HIDLogError("IOServiceOpen failed: 0x%x", ret));
 
     ret = kIOReturnSuccess;
@@ -551,7 +555,7 @@ exit:
           service:(io_service_t)service
 {
     IOReturn ret  = IOObjectRetain(service);
-    require_noerr_action(ret, exit, HIDLogError("IOHIDDeviceClass failed to retain service object with err %x", ret));
+    __Require_noErr_Action(ret, exit, HIDLogError("IOHIDDeviceClass failed to retain service object with err %x", ret));
     os_unfair_recursive_lock_lock(&_deviceLock);
     _service = service;
     os_unfair_recursive_lock_unlock(&_deviceLock);
@@ -578,13 +582,13 @@ static IOReturn _open(void *iunknown, IOOptionBits options)
     uint64_t input = options;
     
     ret = [self initConnect];
-    require_noerr(ret, exit);
+    __Require_noErr(ret, exit);
     
     ret = IOConnectCallScalarMethod(_connect, kIOHIDLibUserClientOpen, &input, 1, 0, NULL);
     if (ret == kIOReturnExclusiveAccess) {
         HIDLogInfo("Device is seized, reports will be dropped until the seizing client closes");
     } else {
-        require_noerr_action(ret, exit, HIDLogError("IOConnectCallMethod(kIOHIDLibUserClientOpen):%x", ret));
+        __Require_noErr_Action(ret, exit, HIDLogError("IOConnectCallMethod(kIOHIDLibUserClientOpen):%x", ret));
     }
     
     os_unfair_recursive_lock_lock(&_deviceLock);
@@ -612,11 +616,11 @@ static IOReturn _close(void * iunknown, IOOptionBits options)
     IOReturn ret;
     
     os_unfair_recursive_lock_lock(&_deviceLock);
-    require_action(_opened, exit, ret = kIOReturnNotOpen);
+    __Require_Action(_opened, exit, ret = kIOReturnNotOpen);
     os_unfair_recursive_lock_unlock(&_deviceLock);
     
     ret = [self initConnect];
-    require_noerr_action(ret, exit, os_unfair_recursive_lock_lock(&_deviceLock));
+    __Require_noErr_Action(ret, exit, os_unfair_recursive_lock_lock(&_deviceLock));
     
     os_unfair_recursive_lock_lock(&_deviceLock);
     if (_inputReportCallback || _inputReportTimestampCallback) {
@@ -670,6 +674,10 @@ static IOReturn _getProperty(void *iunknown,
                                                    (__bridge CFStringRef)key,
                                                    kCFAllocatorDefault,
                                                    0);
+        } else if ([key isEqualToString:@(kIOHIDServiceRegistryNameKey)]) {
+            io_name_t className;
+            IOObjectGetClass(_service, className);
+            prop = CFStringCreateWithCString(kCFAllocatorDefault, className, kCFStringEncodingUTF8);
         } else {
             prop = IORegistryEntrySearchCFProperty(_service,
                                                    kIOServicePlane,
@@ -714,7 +722,7 @@ static IOReturn _setProperty(void *iunknown,
     id propertyCopy = property ? (__bridge_transfer id)CFPropertyListCreateDeepCopy(kCFAllocatorDefault, (__bridge CFTypeRef)property, kCFPropertyListMutableContainersAndLeaves) : nil;
 
     if ([key isEqualToString:@(kIOHIDDeviceSuspendKey)]) {
-        require(_queue, exit);
+        __Require(_queue, exit);
         
         if ([property boolValue]) {
             [_queue stop];
@@ -919,7 +927,7 @@ static IOReturn _copyMatchingElements(void *iunknown,
         }
     }];
     
-    require(elements.count, exit);
+    __Require(elements.count, exit);
     
     if (options & kHIDCopyMatchingElementsDictionary) {
         // Handle IOHIDObsoleteDeviceClass's copyMatchingElements
@@ -974,33 +982,33 @@ static IOReturn _setValue(void *iunknown,
     CFIndex valueLength = 0;
     
     os_unfair_recursive_lock_lock(&_deviceLock);
-    require_action(_opened, exit, ret = kIOReturnNotOpen);
+    __Require_Action(_opened, exit, ret = kIOReturnNotOpen);
     
     ret = [self initElements];
-    require_noerr(ret, exit);
+    __Require_noErr(ret, exit);
 
     tmp = [[HIDLibElement alloc] initWithElementRef:elementRef];
-    require_action(tmp, exit, ret = kIOReturnError);
+    __Require_Action(tmp, exit, ret = kIOReturnError);
     
     elementIndex = [_elements indexOfObject:tmp];
-    require_action(elementIndex != NSNotFound, exit, ret = kIOReturnBadArgument);
+    __Require_Action(elementIndex != NSNotFound, exit, ret = kIOReturnBadArgument);
     
     element = [_elements objectAtIndex:elementIndex];
-    require_action(element.type == kIOHIDElementTypeOutput ||
+    __Require_Action(element.type == kIOHIDElementTypeOutput ||
                    element.type == kIOHIDElementTypeFeature,
                    exit,
                    ret = kIOReturnBadArgument);
 
-    require_action(value, exit, ret = kIOReturnBadArgument);
+    __Require_Action(value, exit, ret = kIOReturnBadArgument);
 
     // Allows checking element is valid without informing kernel. Used by HIDTransactionClass.
-    require_action(!(options & kHIDSetElementValuePendEvent),
+    __Require_Action(!(options & kHIDSetElementValuePendEvent),
                    exit,
                    ret = kIOReturnSuccess);
 
     // Send the value to the kernel.
     valueLength = IOHIDValueGetLength(value);
-    require_action(valueLength>=0, exit, ret = kIOReturnError);
+    __Require_Action(valueLength>=0, exit, ret = kIOReturnError);
 
     inputSize = (uint32_t)(sizeof(IOHIDElementValueHeader) + valueLength);
     inputStruct = malloc(inputSize);
@@ -1072,21 +1080,21 @@ static IOReturn _getValue(void *iunknown,
     }
     
     os_unfair_recursive_lock_lock(&_deviceLock);
-    require_action(_opened, exit, ret = kIOReturnNotOpen);
+    __Require_Action(_opened, exit, ret = kIOReturnNotOpen);
     
     ret = [self initElements];
-    require_noerr(ret, exit);
+    __Require_noErr(ret, exit);
 
     tmp = [[HIDLibElement alloc] initWithElementRef:elementRef];
-    require_action(tmp, exit, ret = kIOReturnError);
+    __Require_Action(tmp, exit, ret = kIOReturnError);
     
     elementIndex = [_elements indexOfObject:tmp];
-    require_action(elementIndex != NSNotFound,
+    __Require_Action(elementIndex != NSNotFound,
                    exit,
                    ret = kIOReturnBadArgument);
     
     element = [_elements objectAtIndex:elementIndex];
-    require_action(element.type != kIOHIDElementTypeCollection,
+    __Require_Action(element.type != kIOHIDElementTypeCollection,
                    exit,
                    ret = kIOReturnBadArgument);
 
@@ -1095,7 +1103,7 @@ static IOReturn _getValue(void *iunknown,
     }
 
     // Allows checking element is valid without informing kernel. Used by HIDTransactionClass.
-    require_action(!(options & kHIDGetElementValuePendEvent),
+    __Require_Action(!(options & kHIDGetElementValuePendEvent),
                    exit,
                    ret = kIOReturnSuccess);
 
@@ -1126,7 +1134,7 @@ static IOReturn _getValue(void *iunknown,
                               NULL,
                               elementValue,
                               &outputSize);
-    require_noerr(ret, exit);
+    __Require_noErr(ret, exit);
     
     // Update our value after kernel call
     timestamp = *((uint64_t *)&(elementValue->timestamp));
@@ -1287,6 +1295,10 @@ static IOReturn _setInputReportCallback(void *iunknown,
     return kIOReturnSuccess;
 }
 
+/*
+ * Lifetime: malloc'd in setReport/getReport when callback != NULL, lives until callback completion or dealloc.
+ * Memory freed on normal completion in _asyncCallback() or on dealloc for aborted/pending callbacks.
+ */
 typedef struct {
     IOHIDReportType     type;
     uint8_t           * buffer;
@@ -1310,6 +1322,11 @@ static void _asyncCallback(void * context, IOReturn result, uint32_t bufferSize,
         [(__bridge IOHIDDeviceClass *)asyncContext->sender releaseReport:addr];
     }
 
+    IOHIDDeviceClass *deviceClass = (__bridge IOHIDDeviceClass *)asyncContext->sender;
+    os_unfair_recursive_lock_lock(&deviceClass->_callbackLock);
+    [deviceClass->_pendingCallbacks removeObject:[NSValue valueWithPointer:asyncContext]];
+    os_unfair_recursive_lock_unlock(&deviceClass->_callbackLock);
+
     ((IOHIDReportCallback)asyncContext->callback)(asyncContext->context,
                                                   result,
                                                   asyncContext->device,
@@ -1317,6 +1334,7 @@ static void _asyncCallback(void * context, IOReturn result, uint32_t bufferSize,
                                                   asyncContext->reportID,
                                                   asyncContext->buffer,
                                                   bufferSize);
+
     free(asyncContext);
 }
 
@@ -1359,7 +1377,7 @@ static IOReturn _setReport(void *iunknown,
     input[1] = reportID;
     
     os_unfair_recursive_lock_lock(&_deviceLock);
-    require_action(_opened, exit, {
+    __Require_Action(_opened, exit, {
         ret = kIOReturnNotOpen;
         os_unfair_recursive_lock_unlock(&_deviceLock);
     });
@@ -1372,7 +1390,7 @@ static IOReturn _setReport(void *iunknown,
         input[2] = timeout;
         
         asyncContext = (AsyncReportContext *)malloc(sizeof(AsyncReportContext));
-        require(asyncContext, exit);
+        __Require(asyncContext, exit);
         
         asyncContext->type = reportType;
         asyncContext->buffer = (uint8_t *)report;
@@ -1386,6 +1404,13 @@ static IOReturn _setReport(void *iunknown,
         asyncRef[kIOAsyncCalloutRefconIndex] = (uint64_t)asyncContext;
         
         [self initPort];
+
+        os_unfair_recursive_lock_lock(&_callbackLock);
+        if (!_pendingCallbacks) {
+            _pendingCallbacks = [[NSMutableSet alloc] init];
+        }
+        [_pendingCallbacks addObject:[NSValue valueWithPointer:asyncContext]];
+        os_unfair_recursive_lock_unlock(&_callbackLock);
         
         ret = IOConnectCallAsyncMethod(_connect,
                                        kIOHIDLibUserClientSetReport,
@@ -1401,6 +1426,9 @@ static IOReturn _setReport(void *iunknown,
                                        0,
                                        0);
         if (ret != kIOReturnSuccess) {
+            os_unfair_recursive_lock_lock(&_callbackLock);
+            [_pendingCallbacks removeObject:[NSValue valueWithPointer:asyncContext]];
+            os_unfair_recursive_lock_unlock(&_callbackLock);
             free(asyncContext);
         }
     }
@@ -1462,7 +1490,7 @@ static IOReturn _getReport(void *iunknown,
     }
     
     os_unfair_recursive_lock_lock(&_deviceLock);
-    require_action(_opened, exit, {
+    __Require_Action(_opened, exit, {
         ret = kIOReturnNotOpen;
         os_unfair_recursive_lock_unlock(&_deviceLock);
     });
@@ -1478,7 +1506,7 @@ static IOReturn _getReport(void *iunknown,
         input[2] = timeout;
         
         asyncContext = (AsyncReportContext *)malloc(sizeof(AsyncReportContext));
-        require(asyncContext, exit);
+        __Require(asyncContext, exit);
         
         asyncContext->type = reportType;
         asyncContext->buffer = (uint8_t *)report;
@@ -1492,6 +1520,13 @@ static IOReturn _getReport(void *iunknown,
         asyncRef[kIOAsyncCalloutRefconIndex] = (uint64_t)asyncContext;
         
         [self initPort];
+
+        os_unfair_recursive_lock_lock(&_callbackLock);
+        if (!_pendingCallbacks) {
+            _pendingCallbacks = [[NSMutableSet alloc] init];
+        }
+        [_pendingCallbacks addObject:[NSValue valueWithPointer:asyncContext]];
+        os_unfair_recursive_lock_unlock(&_callbackLock);
         
         ret = IOConnectCallAsyncMethod(_connect,
                                        kIOHIDLibUserClientGetReport,
@@ -1507,6 +1542,9 @@ static IOReturn _getReport(void *iunknown,
                                        report,
                                        &reportLength);
         if (ret != kIOReturnSuccess) {
+            os_unfair_recursive_lock_lock(&_callbackLock);
+            [_pendingCallbacks removeObject:[NSValue valueWithPointer:asyncContext]];
+            os_unfair_recursive_lock_unlock(&_callbackLock);
             free(asyncContext);
         }
     }
@@ -1620,8 +1658,6 @@ static IOReturn _setInputReportWithTimeStampCallback(void *iunknown,
 
 - (void)dealloc
 {
-    free(_device);
-
     if (_runLoopSource) {
         CFRelease(_runLoopSource);
     }
@@ -1645,6 +1681,14 @@ static IOReturn _setInputReportWithTimeStampCallback(void *iunknown,
     if (_service) {
         IOObjectRelease(_service);
     }
+
+    for (NSValue *contextValue in [_pendingCallbacks copy]) {
+        AsyncReportContext *context = [contextValue pointerValue];
+        free(context);
+    }
+    [_pendingCallbacks removeAllObjects];
+
+    free(_device);
 }
 
 @end
